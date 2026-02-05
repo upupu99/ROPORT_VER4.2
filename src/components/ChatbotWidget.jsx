@@ -1,5 +1,5 @@
 // src/components/ChatbotWidget.jsx
-import React, { memo, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { MessageCircle, X, Send, Sparkles } from "lucide-react";
 
 /**
@@ -9,6 +9,7 @@ import { MessageCircle, X, Send, Sparkles } from "lucide-react";
 function countryLabel(targetCountry) {
   if (targetCountry === "EU") return "유럽(CE)";
   if (targetCountry === "US") return "미국(UL/NRTL/FCC)";
+  // CN 제거했으면 아래 줄 삭제해도 됨
   if (targetCountry === "CN") return "중국(CCC)";
   return targetCountry || "—";
 }
@@ -114,21 +115,11 @@ function buildPlaybookForFail({ item, targetCountry }) {
 
   if (t.includes("비상정지") || t.includes("emergency") || t.includes("iso13850")) {
     extra.standard = "ISO 13850 (Emergency Stop)";
-    extra.rootCause.push(
-      "비상정지 버튼의 색상/형상/배치 또는 '정지 → 재가동' 로직이 ISO 13850 요구와 불일치할 수 있습니다."
-    );
-    extra.quickFix.push(
-      "버튼/배경 색상(적색 버튼 + 황색 배경)과 부착 위치(작업자 접근성)부터 실물 기준으로 점검합니다."
-    );
-    extra.properFix.push(
-      "정지 로직: E-Stop 입력 시 위험 에너지가 안전 상태로 떨어지는지(모터/구동부 차단), 복귀는 '의도적 조작' 후 재시작 절차가 필요한지 확인합니다."
-    );
-    extra.evidence.push(
-      "E-Stop 실물 사진(전면/측면/주변 배경 포함), 배선/릴레이/PLC 입력부 회로 스냅샷"
-    );
-    extra.validation.push(
-      "시나리오 시험: 동작 중 E-Stop → 즉시 정지 → Reset → 재가동(재시작 버튼/절차 필요 여부) 기록"
-    );
+    extra.rootCause.push("비상정지 버튼의 색상/형상/배치 또는 '정지 → 재가동' 로직이 ISO 13850 요구와 불일치할 수 있습니다.");
+    extra.quickFix.push("버튼/배경 색상(적색 버튼 + 황색 배경)과 부착 위치(작업자 접근성)부터 실물 기준으로 점검합니다.");
+    extra.properFix.push("정지 로직: E-Stop 입력 시 위험 에너지가 안전 상태로 떨어지는지(모터/구동부 차단), 복귀는 '의도적 조작' 후 재시작 절차가 필요한지 확인합니다.");
+    extra.evidence.push("E-Stop 실물 사진(전면/측면/주변 배경 포함), 배선/릴레이/PLC 입력부 회로 스냅샷");
+    extra.validation.push("시나리오 시험: 동작 중 E-Stop → 즉시 정지 → Reset → 재가동(재시작 버튼/절차 필요 여부) 기록");
     extra.pitfalls.push("버튼 색상만 바꾸고, '정지 후 재시작 절차'가 매뉴얼/라벨에 반영되지 않는 경우");
   }
 
@@ -214,9 +205,10 @@ function isFailFixIntent(text = "") {
   const t = normalizeText(text);
   if (!t) return false;
   return (
-    (t.includes("fail") || t.includes("불합격") || t.includes("불합") || t.includes("미통과") || t.includes("탈락")) &&
-    (t.includes("어떻게") || t.includes("고치") || t.includes("수정") || t.includes("해결") || t.includes("fix") || t.includes("가이드"))
-  ) || (t.includes("규제진단") && (t.includes("fail") || t.includes("고치") || t.includes("수정") || t.includes("해결")));
+    ((t.includes("fail") || t.includes("불합격") || t.includes("불합") || t.includes("미통과") || t.includes("탈락")) &&
+      (t.includes("어떻게") || t.includes("고치") || t.includes("수정") || t.includes("해결") || t.includes("fix") || t.includes("가이드"))) ||
+    (t.includes("규제진단") && (t.includes("fail") || t.includes("고치") || t.includes("수정") || t.includes("해결")))
+  );
 }
 
 function parsePickIndex(text = "") {
@@ -232,18 +224,24 @@ const ChatbotWidget = memo(function ChatbotWidget({
   currentView = "dashboard",
   targetCountry = "EU",
   dashboardRemediationByMarket = { EU: [], US: [], CN: [] },
-
-  /** ✅ NEW: 로그인 후 기본으로 닫힌 상태로 시작하고 싶을 때 */
   defaultOpen = false,
 }) {
-  // ✅ 여기만 바뀜: true -> defaultOpen
   const [open, setOpen] = useState(Boolean(defaultOpen));
-
   const [expanded, setExpanded] = useState(false);
+
+  // ✅ 패널 위치
   const [pos, setPos] = useState(null);
 
-  const [input, setInput] = useState("");
+  // ✅ 드래그 상태
+  const dragRef = useRef({
+    dragging: false,
+    startX: 0,
+    startY: 0,
+    baseX: 0,
+    baseY: 0,
+  });
 
+  const [input, setInput] = useState("");
   const [pendingPick, setPendingPick] = useState(null);
 
   const [messages, setMessages] = useState([
@@ -252,7 +250,7 @@ const ChatbotWidget = memo(function ChatbotWidget({
       role: "ai",
       text:
         "안녕하세요! 👋\n" +
-        "저는 **규제진단 FAIL 항목을 어떻게 수정하면 PASS로 바뀌는지**만 딥하게 안내하는 봇이에요.\n\n" +
+        "저는 규제사항 및 분석결과에 따라 피드백 및 방법을 알려주는 챗봇이에요.\n\n" +
         "예) “규제진단 FAIL 어떻게 고쳐?” / “미통과 항목 수정 가이드 줘”",
     },
   ]);
@@ -262,21 +260,27 @@ const ChatbotWidget = memo(function ChatbotWidget({
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, expanded]);
 
+  const remediation = useMemo(() => {
+    const bucket = dashboardRemediationByMarket?.[targetCountry] || [];
+    return Array.isArray(bucket) ? bucket : [];
+  }, [dashboardRemediationByMarket, targetCountry]);
+
+  const panelW = expanded ? 520 : 360;
+  const panelH = expanded ? 560 : 520;
+
+  // ✅ 열릴 때 위치가 없으면 우하단에 자동 배치
   useEffect(() => {
-    if (!pos) return;
-    const panelW = expanded ? 520 : 360;
-    const panelH = expanded ? 560 : 520;
+    if (!open) return;
+    if (pos) return;
     const margin = 24;
     const x = window.innerWidth - panelW - margin;
     const y = window.innerHeight - panelH - (margin + 60);
     setPos({ x: Math.max(8, x), y: Math.max(8, y) });
-  }, [pos, expanded]);
+  }, [open, pos, panelW, panelH]);
 
+  // ✅ 리사이즈 시 화면 밖으로 안 나가게 보정
   useEffect(() => {
     function onResize() {
-      if (!pos) return;
-      const panelW = expanded ? 520 : 360;
-      const panelH = expanded ? 560 : 520;
       setPos((p) => {
         if (!p) return p;
         return {
@@ -287,18 +291,13 @@ const ChatbotWidget = memo(function ChatbotWidget({
     }
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [pos, expanded]);
+  }, [panelW, panelH]);
 
-  const remediation = useMemo(() => {
-    const bucket = dashboardRemediationByMarket?.[targetCountry] || [];
-    return Array.isArray(bucket) ? bucket : [];
-  }, [dashboardRemediationByMarket, targetCountry]);
-
-  function appendMessage(role, text) {
+  const appendMessage = useCallback((role, text) => {
     setMessages((prev) => [...prev, { id: Date.now() + Math.random(), role, text }]);
-  }
+  }, []);
 
-  function answerFailPickFlow() {
+  const answerFailPickFlow = useCallback(() => {
     const top = summarizeFailList(remediation, 5);
 
     if (!top.length) {
@@ -351,55 +350,113 @@ const ChatbotWidget = memo(function ChatbotWidget({
     );
 
     setPendingPick({ options: top, market: targetCountry });
-  }
+  }, [appendMessage, remediation, targetCountry]);
 
-  function answerFailPlaybookByIndex(index1based) {
-    if (!pendingPick?.options?.length) return;
-    const idx = index1based - 1;
-    const pick = pendingPick.options[idx];
-    if (!pick) {
-      appendMessage("ai", "해당 번호의 항목이 없어요. 1~5 중에서 골라줘!");
-      return;
-    }
-
-    const play = buildPlaybookForFail({ item: pick, targetCountry });
-    appendMessage("ai", formatAnswer(play));
-    setPendingPick(null);
-  }
-
-  function handleAsk(text) {
-    const userText = text ?? input;
-    if (!String(userText).trim()) return;
-
-    appendMessage("user", userText);
-    setInput("");
-
-    if (pendingPick?.options?.length) {
-      const n = parsePickIndex(userText);
-      if (n != null) {
-        answerFailPlaybookByIndex(n);
+  const answerFailPlaybookByIndex = useCallback(
+    (index1based) => {
+      if (!pendingPick?.options?.length) return;
+      const idx = index1based - 1;
+      const pick = pendingPick.options[idx];
+      if (!pick) {
+        appendMessage("ai", "해당 번호의 항목이 없어요. 1~5 중에서 골라줘!");
         return;
       }
-      appendMessage("ai", "번호(예: 1 또는 2번)로 선택해줘. 딥 가이드 바로 줄게!");
-      return;
+
+      const play = buildPlaybookForFail({ item: pick, targetCountry });
+      appendMessage("ai", formatAnswer(play));
+      setPendingPick(null);
+    },
+    [appendMessage, pendingPick, targetCountry]
+  );
+
+  const handleAsk = useCallback(
+    (text) => {
+      const userText = text ?? input;
+      if (!String(userText).trim()) return;
+
+      appendMessage("user", userText);
+      setInput("");
+
+      if (pendingPick?.options?.length) {
+        const n = parsePickIndex(userText);
+        if (n != null) {
+          answerFailPlaybookByIndex(n);
+          return;
+        }
+        appendMessage("ai", "번호(예: 1 또는 2번)로 선택해줘. 딥 가이드 바로 줄게!");
+        return;
+      }
+
+      if (isFailFixIntent(userText)) {
+        answerFailPickFlow();
+        return;
+      }
+
+      appendMessage("ai", "지금 버전은 **규제진단 FAIL 수정 가이드 전용**이에요.\n\n예) “규제진단 FAIL 어떻게 고쳐?” 라고 물어봐줘!");
+    },
+    [appendMessage, input, pendingPick, answerFailPlaybookByIndex, answerFailPickFlow]
+  );
+
+  // ✅ 드래그 시작 (이게 없어서 지금 튕겼던 거)
+  const onMouseDownHeader = useCallback(
+    (e) => {
+      // 버튼(닫기/확대 등) 누를 때 드래그 시작 방지
+      if (e.target?.closest("button")) return;
+
+      const startX = e.clientX;
+      const startY = e.clientY;
+
+      setPos((p) => {
+        const base = p || { x: 24, y: 24 };
+        dragRef.current = {
+          dragging: true,
+          startX,
+          startY,
+          baseX: base.x,
+          baseY: base.y,
+        };
+        return base;
+      });
+    },
+    [setPos]
+  );
+
+  useEffect(() => {
+    function onMove(e) {
+      if (!dragRef.current.dragging) return;
+      const dx = e.clientX - dragRef.current.startX;
+      const dy = e.clientY - dragRef.current.startY;
+
+      const nextX = dragRef.current.baseX + dx;
+      const nextY = dragRef.current.baseY + dy;
+
+      setPos({
+        x: Math.max(8, Math.min(nextX, window.innerWidth - panelW - 8)),
+        y: Math.max(8, Math.min(nextY, window.innerHeight - panelH - 8)),
+      });
     }
 
-    if (isFailFixIntent(userText)) {
-      answerFailPickFlow();
-      return;
+    function onUp() {
+      if (!dragRef.current.dragging) return;
+      dragRef.current.dragging = false;
     }
 
-    appendMessage(
-      "ai",
-      "지금 버전은 **규제진단 FAIL 수정 가이드 전용**이에요.\n\n예) “규제진단 FAIL 어떻게 고쳐?” 라고 물어봐줘!"
-    );
-  }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [panelW, panelH]);
 
-  // 최소화 상태(= 닫힘 상태)
+  // ✅ 닫힘 상태 (버튼)
   if (!open) {
     return (
       <button
-        onClick={() => setOpen(true)}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
         className="fixed bottom-6 right-6 z-[90] w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-700 text-white shadow-xl flex items-center justify-center"
         title="AI Assistant 열기"
       >
@@ -422,6 +479,8 @@ const ChatbotWidget = memo(function ChatbotWidget({
     <div
       className={`fixed z-[90] ${panelWidthClass} bg-white border border-gray-200 shadow-2xl rounded-2xl overflow-hidden`}
       style={{ left: pos?.x ?? 24, top: pos?.y ?? 24 }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
     >
       {/* Header */}
       <div
@@ -433,30 +492,39 @@ const ChatbotWidget = memo(function ChatbotWidget({
             <Sparkles size={16} />
           </div>
           <div>
-            <div className="text-sm font-black text-gray-900">FAIL Fix Assistant</div>
+            <div className="text-sm font-black text-gray-900">AI 챗봇</div>
             <div className="text-[10px] font-bold text-gray-400">
-              {countryLabel(targetCountry)} • {currentView}
+              {currentView}
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-1">
           <button
-            onClick={() => setExpanded((v) => !v)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded((v) => !v);
+            }}
             className="p-2 rounded-lg hover:bg-gray-50 text-gray-500"
             title={expanded ? "축소" : "확대"}
           >
             <span className="text-xs font-black">{expanded ? "▢" : "▣"}</span>
           </button>
           <button
-            onClick={() => setOpen(false)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+            }}
             className="p-2 rounded-lg hover:bg-gray-50 text-gray-500"
             title="최소화"
           >
             <span className="text-lg leading-none">–</span>
           </button>
           <button
-            onClick={() => setOpen(false)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+            }}
             className="p-2 rounded-lg hover:bg-gray-50 text-gray-500"
             title="닫기"
           >
@@ -465,7 +533,7 @@ const ChatbotWidget = memo(function ChatbotWidget({
         </div>
       </div>
 
-      {/* ✅ 선택 버튼 영역 */}
+      {/* 선택 버튼 */}
       {pickButtons.length > 0 && (
         <div className="px-3 py-2 border-b border-gray-100 bg-gray-50/60">
           <div className="text-[10px] font-black text-gray-600 mb-2">FAIL 항목 선택</div>
@@ -473,7 +541,8 @@ const ChatbotWidget = memo(function ChatbotWidget({
             {pickButtons.map((b) => (
               <button
                 key={b.idx}
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   appendMessage("user", String(b.idx));
                   setTimeout(() => answerFailPlaybookByIndex(b.idx), 120);
                 }}
@@ -493,9 +562,7 @@ const ChatbotWidget = memo(function ChatbotWidget({
           <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div
               className={`max-w-[88%] whitespace-pre-wrap text-xs leading-relaxed px-3 py-2 rounded-2xl border ${
-                m.role === "user"
-                  ? "bg-blue-600 text-white border-blue-600"
-                  : "bg-white text-gray-700 border-gray-200"
+                m.role === "user" ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-700 border-gray-200"
               }`}
             >
               {m.text}
@@ -526,11 +593,6 @@ const ChatbotWidget = memo(function ChatbotWidget({
       </div>
     </div>
   );
-
-  // ✅ 아래 함수가 파일 원본에 있었는데, 위에서 써야 해서 함수 선언을 올려야 합니다.
-  // 하지만 기존 코드 구조 유지하려면 아래처럼 파일 하단에 두면 안 되고,
-  // onMouseDownHeader / drag 관련 로직이 본문에 필요합니다.
-  // → (원본 코드 그대로) drag 관련 함수/훅은 아래에 다시 붙여주세요.
 });
 
 export default ChatbotWidget;

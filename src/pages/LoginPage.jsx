@@ -20,7 +20,7 @@ export default function LoginPage({ onLogin }) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-4 focus:ring-blue-100"
-              placeholder="KT AIVLE daedong"
+              placeholder="kt0203"
             />
           </div>
 

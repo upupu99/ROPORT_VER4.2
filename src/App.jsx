@@ -146,10 +146,13 @@ export default function App() {
 
   const uploadToSlot = useCallback((slotId, file) => {
     const today = new Date().toISOString().slice(0, 10);
-    const size = typeof file?.size === "number" ? `${Math.round(file.size / 1024)} KB` : "—";
+    const size =
+      typeof file?.size === "number" ? `${Math.round(file.size / 1024)} KB` : "—";
 
     setRepositoryFiles((prev) =>
-      prev.map((f) => (f.slotId === slotId ? { ...f, file, origin: "Local Upload", date: today, size } : f))
+      prev.map((f) =>
+        f.slotId === slotId ? { ...f, file, origin: "Local Upload", date: today, size } : f
+      )
     );
   }, []);
 
@@ -177,7 +180,10 @@ export default function App() {
   useEffect(() => {
     if (!currentProject?.id) return;
     try {
-      localStorage.setItem(projectAssetKey(currentProject.id), JSON.stringify(projectAssetFiles));
+      localStorage.setItem(
+        projectAssetKey(currentProject.id),
+        JSON.stringify(projectAssetFiles)
+      );
     } catch {
       // ignore
     }
@@ -238,7 +244,8 @@ export default function App() {
       setProjects(initialList);
 
       const savedId = localStorage.getItem(CURRENT_PROJECT_ID_KEY);
-      const found = initialList.find((p) => p.id === savedId) || initialList[0] || null;
+      const found =
+        initialList.find((p) => p.id === savedId) || initialList[0] || null;
 
       setCurrentProject(found);
       setTargetCountry(safeCountry(found?.country ?? "EU"));
@@ -317,6 +324,19 @@ export default function App() {
   );
 
   /* ===============================
+     ✅ 프로젝트 이름 변경
+  ================================ */
+  const renameProject = useCallback((projectId, nextName) => {
+    const name = String(nextName || "").trim();
+    if (!projectId || !name) return;
+
+    setProjects((prev) => (prev || []).map((p) => (p.id === projectId ? { ...p, name } : p)));
+
+    // currentProject도 즉시 반영
+    setCurrentProject((p) => (p?.id === projectId ? { ...p, name } : p));
+  }, []);
+
+  /* ===============================
      ✅ 새 프로젝트 생성
   ================================ */
   const createAndSwitchProject = useCallback(
@@ -345,7 +365,7 @@ export default function App() {
       setDashboardRemediationByMarket({ EU: [], US: [] });
       resetDocProcess();
 
-      // ✅ 프로젝트 만든 뒤, 원래 가려던 메뉴가 있으면 이동 (원치 않으면 이 3줄 삭제해도 됨)
+      // ✅ 프로젝트 만든 뒤, 원래 가려던 메뉴가 있으면 이동
       if (pendingView) setCurrentView(pendingView);
       else setCurrentView("dashboard");
       setPendingView(null);
@@ -434,11 +454,16 @@ export default function App() {
   ================================ */
   const CreateProjectModal = createProjectOpen ? (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
-      <div className="absolute inset-0 bg-black/40" onClick={() => setCreateProjectOpen(false)} />
+      <div
+        className="absolute inset-0 bg-black/40"
+        onClick={() => setCreateProjectOpen(false)}
+      />
       <div className="relative w-[min(560px,92vw)] bg-white rounded-3xl border border-gray-200 shadow-2xl overflow-hidden">
         <div className="p-6 border-b border-gray-100 bg-gray-50/60">
           <div className="text-lg font-black text-gray-900">새 프로젝트 추가</div>
-          <div className="text-xs text-gray-500 mt-1">프로젝트 이름을 입력하면 새 프로젝트가 추가됩니다.</div>
+          <div className="text-xs text-gray-500 mt-1">
+            프로젝트 이름을 입력하면 새 프로젝트가 추가됩니다.
+          </div>
         </div>
 
         <div className="p-6">
@@ -478,7 +503,6 @@ export default function App() {
 
   /* ===============================
      ✅ (NEW) 프로젝트 필요 전역 모달 (전체 화면)
-     - 1)2)3) 섹션 삭제 버전
   ================================ */
   const RequireProjectModal = requireProjectOpen ? (
     <div className="fixed inset-0 z-[999] flex items-center justify-center p-6">
@@ -523,7 +547,7 @@ export default function App() {
             <button
               onClick={() => {
                 setRequireProjectOpen(false);
-                setCreateProjectOpen(true); // ✅ 기존 생성 모달 오픈
+                setCreateProjectOpen(true);
               }}
               className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 transition text-sm font-black text-white shadow-sm"
             >
@@ -568,8 +592,8 @@ export default function App() {
         projects={projects}
         onDeleteProject={deleteProject}
         onOpenCreateProject={() => setCreateProjectOpen(true)}
+        onRenameProject={renameProject}
         onRequireProject={(viewKey) => {
-          // ✅ 프로젝트 없을 때 클릭한 메뉴 기억해뒀다가 생성 후 이동(원치 않으면 pendingView 관련 제거)
           setPendingView(viewKey || null);
           setRequireProjectOpen(true);
         }}
@@ -590,7 +614,9 @@ export default function App() {
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 rounded-full border border-emerald-100 shadow-sm">
               <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-              <span className="text-[10px] font-bold text-emerald-700 tracking-wide">SYSTEM STABLE</span>
+              <span className="text-[10px] font-bold text-emerald-700 tracking-wide">
+                SYSTEM STABLE
+              </span>
             </div>
 
             <div className="w-9 h-9 bg-gradient-to-tr from-gray-100 to-gray-200 rounded-full border border-gray-200 flex items-center justify-center text-gray-600 text-xs font-bold shadow-sm cursor-pointer hover:ring-4 hover:ring-gray-100 transition-all">
@@ -604,7 +630,6 @@ export default function App() {
           {currentView === "dashboard" && (
             <DashboardView
               uploadedFiles={uploadedFiles}
-              /** ✅ 대시보드 Repository = 프로젝트별 projectAssetFiles */
               repositoryFiles={projectAssetFiles}
               onUploadToSlot={uploadProjectAsset}
               onRemoveRepositoryFile={removeProjectAsset}

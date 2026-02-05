@@ -1,5 +1,6 @@
 // src/components/Sidebar.jsx
 import React, { memo, useMemo, useState } from "react";
+import logo from "../assets/roprot 로고.png";
 import {
   LayoutDashboard,
   Shield,
@@ -9,6 +10,8 @@ import {
   ChevronDown,
   Plus,
   Trash2,
+  Pencil,
+  Check,
 } from "lucide-react";
 
 const SectionHeader = memo(({ children }) => (
@@ -71,11 +74,16 @@ const Sidebar = memo(function Sidebar({
   projects = [],
   onDeleteProject,
   onOpenCreateProject,
+  onRenameProject, // ✅ 추가
 
-  onRequireProject, // ✅ App 전역 모달 트리거 (viewKey 전달)
+  onRequireProject,
 }) {
   const hasProjects = (projects || []).length > 0;
   const [open, setOpen] = useState(false);
+
+  // ✅ rename state
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameValue, setRenameValue] = useState("");
 
   const hasCurrentProject = Boolean(currentProject?.name);
 
@@ -85,42 +93,43 @@ const Sidebar = memo(function Sidebar({
   }, [currentProject?.name]);
 
   const go = (viewKey) => {
-    // ✅ 설정은 예외
     if (viewKey === "settings") {
       setCurrentView?.(viewKey);
       return;
     }
-
-    // ✅ 프로젝트 없으면 App 전역 모달
     if (!hasCurrentProject) {
       onRequireProject?.(viewKey);
       return;
     }
-
     setCurrentView?.(viewKey);
+  };
+
+  const startRename = (p) => {
+    setRenamingId(p.id);
+    setRenameValue(p.name || "");
+  };
+
+  const commitRename = (p) => {
+    const next = String(renameValue || "").trim();
+    if (next) onRenameProject?.(p.id, next);
+    setRenamingId(null);
+  };
+
+  const cancelRename = () => {
+    setRenamingId(null);
   };
 
   return (
     <div className="w-[260px] bg-white/60 backdrop-blur-xl h-screen flex flex-col fixed left-0 top-0 border-r border-gray-200 z-50">
       {/* Header / Logo */}
       <div className="p-5 border-b border-gray-100">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-xl overflow-hidden shadow-sm bg-white border border-gray-100 relative">
-            <img
-              src="https://static.toss.im/png-icons/securities/icn-sec-fill-000490.png"
-              alt="ROPORT Logo"
-              className="w-full h-full object-cover scale-[1.5]"
-            />
-          </div>
-
-          <div>
-            <span className="text-base font-bold text-gray-900 tracking-tight block">
-              ROPORT
-            </span>
-            <span className="text-[10px] font-semibold text-gray-400 tracking-wide">
-              GLOBAL CERTIFICATION
-            </span>
-          </div>
+        <div className="mb-5 flex justify-center">
+          <img
+            src={logo}
+            alt="ROPORT"
+            className="h-15 w-full object-contain select-none"
+            draggable={false}
+          />
         </div>
 
         {/* Project selector */}
@@ -156,40 +165,94 @@ const Sidebar = memo(function Sidebar({
               {/* Project list */}
               {hasProjects ? (
                 <div className="max-h-[260px] overflow-y-auto custom-scrollbar">
-                  {(projects || []).map((p) => (
-                    <div
-                      key={p.id}
-                      className={`w-full p-2 rounded-lg text-sm flex items-center justify-between gap-2 ${
-                        currentProject?.id === p.id
-                          ? "bg-blue-50 text-blue-700"
-                          : "text-gray-700 hover:bg-gray-50"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCurrentProject?.(p);
-                          setOpen(false);
-                        }}
-                        className="flex-1 text-left truncate"
-                        title={p.name}
-                      >
-                        <span className="font-bold">{p.name}</span>
-                      </button>
+                  {(projects || []).map((p) => {
+                    const isCurrent = currentProject?.id === p.id;
+                    const isRenaming = renamingId === p.id;
 
-                      {/* Delete */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onDeleteProject?.(p.id);
-                        }}
-                        className="p-2 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50"
-                        title="프로젝트 삭제"
+                    // ✅ "오너(현재)"만 파란 강조 / 나머지는 회색 고정 (hover도 회색만)
+                    const rowClass = isCurrent
+                      ? "bg-blue-50 text-blue-700 border border-blue-100"
+                      : "bg-white text-gray-700 border border-transparent hover:bg-gray-50";
+
+                    return (
+                      <div
+                        key={p.id}
+                        className={`w-full p-2 rounded-lg text-sm flex items-center justify-between gap-2 transition-colors ${rowClass}`}
                       >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  ))}
+                        {/* Left: label or rename input */}
+                        <div className="flex-1 min-w-0">
+                          {!isRenaming ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCurrentProject?.(p);
+                                setOpen(false);
+                              }}
+                              className="w-full text-left truncate"
+                              title={p.name}
+                            >
+                              <span className="font-bold">{p.name}</span>
+                            </button>
+                          ) : (
+                            <input
+                              value={renameValue}
+                              onChange={(e) => setRenameValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") commitRename(p);
+                                if (e.key === "Escape") cancelRename();
+                              }}
+                              className="w-full px-2 py-1.5 rounded-lg border border-gray-200 bg-white text-sm font-bold text-gray-800 focus:outline-none focus:ring-4 focus:ring-blue-100"
+                              autoFocus
+                            />
+                          )}
+                        </div>
+
+                        {/* Right: actions */}
+                        <div className="flex items-center gap-1 shrink-0">
+                          {/* Rename: 현재 프로젝트든 아니든 동일 동작.
+                              (현재 프로젝트만 수정 허용하고 싶으면 isCurrent 체크 추가하면 됨) */}
+                          {!isRenaming ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                startRename(p);
+                              }}
+                              className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+                              title="프로젝트 이름 수정"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                commitRename(p);
+                              }}
+                              className="p-2 rounded-lg text-blue-600 hover:bg-blue-50"
+                              title="저장"
+                            >
+                              <Check size={14} />
+                            </button>
+                          )}
+
+                          {/* Delete */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteProject?.(p.id);
+                            }}
+                            className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+                            title="프로젝트 삭제"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="p-3 text-xs text-gray-500">
@@ -218,7 +281,10 @@ const Sidebar = memo(function Sidebar({
             <button
               type="button"
               className="fixed inset-0 z-40 cursor-default"
-              onClick={() => setOpen(false)}
+              onClick={() => {
+                setOpen(false);
+                setRenamingId(null);
+              }}
               aria-label="close project dropdown"
             />
           )}
@@ -269,7 +335,7 @@ const Sidebar = memo(function Sidebar({
             label="설정"
             desc="보안 및 환경설정"
             active={currentView === "settings"}
-            onClick={() => go("settings")} // ✅ 예외
+            onClick={() => go("settings")}
           />
         </div>
       </nav>

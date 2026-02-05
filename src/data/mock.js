@@ -49,7 +49,7 @@ export const PROJECTS = [
         { id: "eu_admin_1", name: "적합성 선언서(DoC) 정보", desc: "제조사, 대리인(EAR), 적용 지침 및 표준 리스트", required: true, iconKey: "ScrollText" },
       ],
       generatedOutputs: [
-        { name: "EC_Declaration_of_Conformity_Final.pdf", type: "DoC", desc: "유럽 적합성 선언서 최종본", size: "1.2MB" },
+        { name: "EC_Declaration_of_Conformity_Final.pdf", type: "DoC", desc: "유럽 적합성 선언서 최종본", size: "1.2MB", file: "EU_DOC_FINAL", },
         { name: "Technical_Construction_File(TCF).zip", type: "TCF", desc: "CE 인증 통합 기술문서 패키지", size: "45MB" },
         { name: "Risk_Assessment_Report.pdf", type: "Report", desc: "ISO 12100 기반 위험성 평가 보고서", size: "2.5MB" },
         { name: "User_Manual_EU_Multilingual.pdf", type: "Manual", desc: "다국어 변환 및 필수 경고 문구 반영 매뉴얼", size: "8.5MB" },

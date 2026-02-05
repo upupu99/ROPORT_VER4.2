@@ -21,6 +21,14 @@ import FileUploader from "../components/FileUploader";
 import RepositoryView from "../components/RepositoryView";
 import { DOC_PROCESS_CONFIG } from "../data/mock";
 
+// ✅ assets에 넣은 EU DoC 최종본 PDF (경로/파일명 정확히 맞춰주세요)
+import EU_DOC_FINAL_PDF from "../assets/EC_Declaration_of_Conformity_Final.pdf";
+
+// ✅ doc.file 값으로 다운로드 파일 매핑
+const DOWNLOAD_MAP = {
+  EU_DOC_FINAL: EU_DOC_FINAL_PDF,
+};
+
 /** =========================
  * Repo Auto Match Helpers
  * ========================= */
@@ -66,7 +74,8 @@ function pickBestFile(repositoryFiles, keywords = []) {
     if (
       (ks.includes("dwg") || ks.includes("dxf") || ks.includes("stp") || ks.includes("step")) &&
       (ext === "dwg" || ext === "dxf" || ext === "stp" || ext === "step")
-    ) score += 4;
+    )
+      score += 4;
 
     if (score > bestScore) {
       bestScore = score;
@@ -238,9 +247,7 @@ const DocsView = memo(function DocsView({
               >
                 <Wand2 size={16} /> 파일저장소 자동 업로드
               </button>
-              <span className="text-[10px] font-bold text-gray-500">
-                (저장소 파일명/확장자 기반으로 자동 연결)
-              </span>
+              <span className="text-[10px] font-bold text-gray-500">(저장소 파일명/확장자 기반으로 자동 연결)</span>
             </div>
           )}
         </div>
@@ -350,11 +357,7 @@ const DocsView = memo(function DocsView({
                   </div>
 
                   {!uploadedFiles?.[req.id] && (
-                    <FileUploader
-                      id={req.id}
-                      onFileSelect={onFileChange}
-                      onRepoSelect={(id) => setRepoModalTarget(id)}
-                    />
+                    <FileUploader id={req.id} onFileSelect={onFileChange} onRepoSelect={(id) => setRepoModalTarget(id)} />
                   )}
                 </div>
               ))}
@@ -488,9 +491,25 @@ const DocsView = memo(function DocsView({
                   </div>
                 </div>
 
-                <button className="shrink-0 flex items-center gap-2 text-sm font-bold text-gray-600 hover:text-white bg-gray-50 hover:bg-blue-600 px-6 py-3 rounded-xl transition-all shadow-sm group-hover:shadow-md">
-                  <Download size={16} /> <span className="hidden sm:inline">다운로드</span>
-                </button>
+                {/* ✅ EU DoC 최종본만 실제 다운로드, 나머지는 비활성 */}
+                {doc.file === "EU_DOC_FINAL" ? (
+                  <a
+                    href={DOWNLOAD_MAP[doc.file]}
+                    download={doc.name || "EC_Declaration_of_Conformity_Final.pdf"}
+                    className="shrink-0 flex items-center gap-2 text-sm font-bold text-gray-600 hover:text-white bg-gray-50 hover:bg-blue-600 px-6 py-3 rounded-xl transition-all shadow-sm group-hover:shadow-md"
+                  >
+                    <Download size={16} /> <span className="hidden sm:inline">다운로드</span>
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {}}
+                    className="shrink-0 flex items-center gap-2 text-sm font-bold text-gray-600 hover:text-white bg-gray-50 hover:bg-blue-600 px-6 py-3 rounded-xl transition-all shadow-sm group-hover:shadow-md"
+                    title="준비중"
+                  >
+                    <Download size={16} /> <span className="hidden sm:inline">다운로드</span>
+                  </button>
+                )}
               </div>
             ))}
           </div>

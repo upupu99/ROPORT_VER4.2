@@ -21,6 +21,79 @@ import FileUploader from "../components/FileUploader";
 import RepositoryView from "../components/RepositoryView";
 import { DOC_PROCESS_CONFIG } from "../data/mock";
 
+/** =========================
+ * Repo Auto Match Helpers
+ * ========================= */
+const norm = (s = "") =>
+  String(s)
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/_/g, "")
+    .replace(/-/g, "");
+
+function fileExt(name = "") {
+  const n = String(name || "").toLowerCase();
+  const m = n.match(/\.([a-z0-9]+)$/);
+  return m ? m[1] : "";
+}
+
+/** 키워드 기반으로 저장소 파일 중 가장 비슷한 1개 찾기 */
+function pickBestFile(repositoryFiles, keywords = []) {
+  const ks = (keywords || [])
+    .flatMap((k) => String(k || "").split(/[\s/(),]+/g))
+    .map(norm)
+    .filter(Boolean);
+
+  let best = null;
+  let bestScore = -1;
+
+  for (const f of repositoryFiles || []) {
+    const nameRaw = String(f?.name || "");
+    const name = norm(nameRaw);
+    let score = 0;
+
+    // 키워드 hit
+    for (const k of ks) {
+      if (!k) continue;
+      if (name.includes(k)) score += 10;
+    }
+
+    // 확장자 가산점(요구 desc에 있는 확장자 힌트)
+    const ext = fileExt(nameRaw);
+    if (ks.includes("pdf") && ext === "pdf") score += 4;
+    if ((ks.includes("doc") || ks.includes("docx")) && (ext === "doc" || ext === "docx")) score += 4;
+    if ((ks.includes("xlsx") || ks.includes("csv")) && (ext === "xlsx" || ext === "csv")) score += 4;
+    if (
+      (ks.includes("dwg") || ks.includes("dxf") || ks.includes("stp") || ks.includes("step")) &&
+      (ext === "dwg" || ext === "dxf" || ext === "stp" || ext === "step")
+    ) score += 4;
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = f;
+    }
+  }
+
+  return bestScore > 0 ? best : null;
+}
+
+/** 요구사항 id에 따라 “매칭용 키워드” 세팅 (EU 데모 기준) */
+function getKeywordsForEU(reqId, reqName, reqDesc) {
+  const base = [reqName, reqDesc, "rt100"];
+
+  // reqId 기반 강한 힌트
+  const byId = {
+    eu_tech_1: ["spec", "사양", "제품사양", "product", "specification", "pdf"],
+    eu_tech_2: ["ehsr", "checklist", "체크리스트", "risk", "평가", "pdf", "xlsx"],
+    eu_tech_3: ["circuit", "회로", "block", "도면", "drawing", "dwg", "pdf"],
+    eu_tech_4: ["test", "report", "성적서", "시험", "pdf"],
+    eu_tech_5: ["manual", "매뉴얼", "user", "guide", "pdf"],
+    eu_admin_1: ["doc", "declaration", "contract", "대리인", "계약", "pdf", "docx"],
+  };
+
+  return [...base, ...(byId[reqId] || [])];
+}
+
 const DocsView = memo(function DocsView({
   targetCountry,
   setTargetCountry,
@@ -33,26 +106,12 @@ const DocsView = memo(function DocsView({
   handleFileUpload,
   handleRemoveFile,
 
-  // ✅ App.jsx에서 내려주는 저장소 파일 목록
+  // ✅ App.jsx에서 내려주는 저장소 파일 목록 (프로젝트 자산)
   repositoryFiles = [],
 }) {
   const config = DOC_PROCESS_CONFIG[targetCountry];
   const [repoModalTarget, setRepoModalTarget] = useState(null);
   const [logs, setLogs] = useState([]);
-
-  // ✅ EU 자동 업로드 매핑 (DOC_PROCESS_CONFIG.EU의 id -> repositoryFiles.slotId)
-  // 저장소에 "딱 그 문서"가 없는 건 가장 유사한 슬롯(사양서/계약서 등)으로 임시 매핑
-  const EU_AUTO_MAP = useMemo(
-    () => ({
-      eu_tech_1: "rt100_spec", // 위험성 평가서 기초자료 -> 제품사양서로 대체(임시)
-      eu_tech_2: "rt100_spec", // EHSR 체크리스트 -> 제품사양서로 대체(임시)
-      eu_tech_3: "rt100_circuit", // 도면/회로도 -> 회로도/블록도
-      eu_tech_4: "rt100_test_report", // 시험 성적서 -> 시험성적서
-      eu_tech_5: "rt100_manual", // 사용자 매뉴얼 초안 -> 사용자 매뉴얼
-      eu_admin_1: "eu_rep_contract", // DoC 정보 -> 유럽대리인계약서로 대체(임시)
-    }),
-    []
-  );
 
   // ✅ 기술 + 행정 통합
   const combinedInputs = useMemo(() => {
@@ -111,30 +170,49 @@ const DocsView = memo(function DocsView({
     setRepoModalTarget(null);
   };
 
-  // ✅ 파일저장소 자동 업로드 (EU 기준은 100% 동작)
+  /** ✅ 자동 업로드 (slotId 있으면 slotId 우선, 없으면 파일명 키워드 매칭) */
   const autoUploadFromRepo = useCallback(() => {
     if (targetCountry !== "EU") {
-      alert("현재 자동 업로드는 EU 데모만 연결되어 있어요. (US/CN도 원하면 바로 추가해드릴게요)");
+      alert("현재 자동 업로드는 EU 데모만 연결되어 있어요. (US도 원하면 바로 추가 가능)");
       return;
     }
 
-    // repositoryFiles slotId -> row 빠르게 찾기
-    const repoBySlot = new Map((repositoryFiles || []).map((r) => [r.slotId, r]));
+    // slotId 기반 lookup (혹시 repositoryFiles에 slotId가 있는 경우 대비)
+    const repoBySlot = new Map((repositoryFiles || []).map((r) => [r?.slotId, r]).filter(([k]) => !!k));
+
+    // EU 데모 slot 매핑(있으면 사용)
+    const EU_AUTO_MAP = {
+      eu_tech_1: "rt100_spec",
+      eu_tech_2: "rt100_spec",
+      eu_tech_3: "rt100_circuit",
+      eu_tech_4: "rt100_test_report",
+      eu_tech_5: "rt100_manual",
+      eu_admin_1: "eu_rep_contract",
+    };
+
+    console.log("[Docs AutoUpload] repo files:", repositoryFiles);
 
     combinedInputs.forEach((req) => {
-      // 이미 업로드 된 건 스킵
       if (uploadedFiles?.[req.id]) return;
 
+      // 1) slotId 우선
       const slotId = EU_AUTO_MAP[req.id];
-      if (!slotId) return;
+      const slotHit = slotId ? repoBySlot.get(slotId) : null;
 
-      const hit = repoBySlot.get(slotId);
+      // 2) 없으면 파일명 매칭
+      const keywords = getKeywordsForEU(req.id, req.name, req.desc);
+      const nameHit = pickBestFile(repositoryFiles, keywords);
+
+      const hit = slotHit || nameHit;
+
+      console.log("[Docs AutoUpload] req:", req.id, req.name, { slotHit, nameHit, hit });
+
       if (!hit) return;
 
-      // ✅ 데모 방식: 파일명만 업로드 처리
+      // 데모: 파일명만 업로드 처리
       handleFileUpload(req.id, hit.name);
     });
-  }, [targetCountry, repositoryFiles, combinedInputs, uploadedFiles, EU_AUTO_MAP, handleFileUpload]);
+  }, [targetCountry, repositoryFiles, combinedInputs, uploadedFiles, handleFileUpload]);
 
   return (
     <div className="p-8 pb-28 max-w-[1400px] mx-auto animate-fade-in h-full flex flex-col">
@@ -161,7 +239,7 @@ const DocsView = memo(function DocsView({
                 <Wand2 size={16} /> 파일저장소 자동 업로드
               </button>
               <span className="text-[10px] font-bold text-gray-500">
-                (EU 데모 매핑: 회로도/성적서/매뉴얼 자동 연결)
+                (저장소 파일명/확장자 기반으로 자동 연결)
               </span>
             </div>
           )}
@@ -183,7 +261,6 @@ const DocsView = memo(function DocsView({
             >
               {code === "EU" && "유럽"}
               {code === "US" && "미국"}
-            
             </button>
           ))}
         </div>
@@ -291,16 +368,16 @@ const DocsView = memo(function DocsView({
                 </div>
               )}
 
-<button
-  onClick={startDocGeneration}
-  disabled={!isAtLeastOne}
-  className={`w-full py-4 rounded-xl font-bold text-base shadow-lg transition-all flex items-center justify-center gap-2 transform hover:scale-[1.02]
-    ${
-      isAtLeastOne
-        ? "bg-blue-600 hover:bg-blue-700 text-white cursor-pointer hover:shadow-blue-200"
-        : "bg-gray-200 text-gray-400 cursor-not-allowed"
-    }`}
->
+              <button
+                onClick={startDocGeneration}
+                disabled={!isAtLeastOne}
+                className={`w-full py-4 rounded-xl font-bold text-base shadow-lg transition-all flex items-center justify-center gap-2 transform hover:scale-[1.02]
+                  ${
+                    isAtLeastOne
+                      ? "bg-blue-600 hover:bg-blue-700 text-white cursor-pointer hover:shadow-blue-200"
+                      : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                  }`}
+              >
                 {isFullyReady ? <Zap size={20} className="animate-pulse" /> : <FilePenLine size={20} />}
                 {isFullyReady ? " 정식 기술문서 생성" : "초안 문서 생성⚠️"}
               </button>
@@ -391,24 +468,27 @@ const DocsView = memo(function DocsView({
             {config.generatedOutputs.map((doc, idx) => (
               <div
                 key={idx}
-                className="bg-white p-6 rounded-[2rem] border border-gray-200 shadow-sm hover:shadow-lg hover:border-blue-300 hover:-translate-y-1 transition-all group relative overflow-hidden flex items-center justify-between"
+                className="bg-white p-6 rounded-[2rem] border border-gray-200 shadow-sm hover:shadow-lg hover:border-blue-300 hover:-translate-y-1 transition-all group relative overflow-hidden flex items-center justify-between gap-4"
               >
-                <div className="flex items-center gap-5">
+                <div className="flex items-center gap-5 min-w-0 flex-1">
                   <div className="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center shadow-inner shrink-0 group-hover:scale-110 transition-transform">
                     <FileText size={28} />
                   </div>
-                  <div>
+
+                  <div className="min-w-0 flex-1">
                     <span className="text-[10px] font-bold text-white bg-blue-600 px-2.5 py-1 rounded-full uppercase tracking-wide shadow-sm mb-1 inline-block">
                       {doc.type}
                     </span>
-                    <h3 className="font-bold text-gray-800 text-lg truncate w-72">{doc.desc}</h3>
-                    <p className="text-xs text-gray-400 mt-1">
+                    <h3 className="font-bold text-gray-800 text-lg leading-snug line-clamp-2 break-words">
+                      {doc.desc}
+                    </h3>
+                    <p className="text-xs text-gray-400 mt-1 truncate">
                       {doc.name} • {doc.size}
                     </p>
                   </div>
                 </div>
 
-                <button className="flex items-center gap-2 text-sm font-bold text-gray-600 hover:text-white bg-gray-50 hover:bg-blue-600 px-6 py-3 rounded-xl transition-all shadow-sm group-hover:shadow-md">
+                <button className="shrink-0 flex items-center gap-2 text-sm font-bold text-gray-600 hover:text-white bg-gray-50 hover:bg-blue-600 px-6 py-3 rounded-xl transition-all shadow-sm group-hover:shadow-md">
                   <Download size={16} /> <span className="hidden sm:inline">다운로드</span>
                 </button>
               </div>

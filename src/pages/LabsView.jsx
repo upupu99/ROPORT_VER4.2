@@ -18,11 +18,141 @@ import StatusSummaryWidget from "../components/StatusSummaryWidget";
 import FileUploader from "../components/FileUploader";
 import RepositoryView from "../components/RepositoryView";
 
+// ✅ mock에서 매칭 결과 데이터 가져오기
+import { LABS_DATA } from "../data/mock";
+
+/* =========================
+   Score Modal (내장 컴포넌트)
+========================= */
+const ScoreRow = memo(function ScoreRow({ label, value }) {
+  const v = Number.isFinite(value) ? value : 0;
+  const pct = Math.max(0, Math.min(100, v));
+  return (
+    <div className="py-3">
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-sm font-bold text-gray-700">{label}</div>
+        <div className="text-sm font-black text-gray-900">{v}점</div>
+      </div>
+      <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+        <div className="h-full bg-blue-600" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+});
+
+const ScoreModal = memo(function ScoreModal({ lab, onClose }) {
+  const scoring = lab?.scoring || {};
+  const total = useMemo(() => {
+    const vals = [
+      scoring.cost ?? 0,
+      scoring.leadTime ?? 0,
+      scoring.successRate ?? 0,
+      scoring.testField ?? 0,
+    ].map((n) => (Number.isFinite(n) ? n : 0));
+    return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+  }, [scoring]);
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative w-[min(560px,92vw)] bg-white rounded-3xl border border-gray-200 shadow-2xl overflow-hidden">
+        <div className="p-6 border-b border-gray-100 bg-gray-50/60 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-lg font-black text-gray-900 truncate">{lab?.name || "스코어링"}</div>
+            <div className="text-xs text-gray-500 mt-1">
+              비용 / 리드타임 / 과거 인증성공률 / 시험분야 적합도
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-xl hover:bg-gray-100 text-gray-500"
+            aria-label="close"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-6">
+          <div className="mb-4 p-4 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-between">
+            <div className="text-sm font-bold text-blue-700">총점(평균)</div>
+            <div className="text-2xl font-black text-blue-700">{total}점</div>
+          </div>
+
+          <ScoreRow label="비용" value={scoring.cost} />
+          <ScoreRow label="리드타임" value={scoring.leadTime} />
+          <ScoreRow label="과거 인증성공률" value={scoring.successRate} />
+          <ScoreRow label="시험분야 적합도" value={scoring.testField} />
+
+          <div className="mt-6 flex justify-end">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl bg-blue-600 text-white font-black text-sm hover:bg-blue-700"
+            >
+              닫기
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+/* =========================
+   ✅ 파일명 기반 자동 업로드 헬퍼
+   - "프로젝트 자산"은 slotId가 없기 때문에 파일명으로 매칭해야 함
+========================= */
+const norm = (s = "") =>
+  String(s || "")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/_/g, "")
+    .replace(/-/g, "")
+    .replace(/[()]/g, "")
+    .replace(/,/g, "");
+
+const extOf = (name = "") => {
+  const n = String(name || "").toLowerCase();
+  const m = n.match(/\.([a-z0-9]+)$/);
+  return m ? m[1] : "";
+};
+
+function pickBestFile(repositoryFiles, { keywords = [], exts = [] }) {
+  const ks = (keywords || []).map(norm).filter(Boolean);
+  const allowedExts = (exts || []).map((e) => String(e).toLowerCase()).filter(Boolean);
+
+  let best = null;
+  let bestScore = -1;
+
+  for (const f of repositoryFiles || []) {
+    const rawName = String(f?.name || "");
+    const name = norm(rawName);
+    const ext = extOf(rawName);
+
+    if (allowedExts.length > 0 && !allowedExts.includes(ext)) continue;
+
+    let score = 0;
+
+    for (const k of ks) {
+      if (name.includes(k)) score += 10;
+    }
+
+    // RT100 포함 시 약간 가산점(너 패턴 고정)
+    if (name.includes("rt100")) score += 2;
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = f;
+    }
+  }
+
+  return bestScore > 0 ? best : null;
+}
+
 const LabsView = memo(function LabsView({
   targetCountry,
   setTargetCountry,
 
-  // ✅ App.jsx에서 내려주는 저장소 파일 목록
+  // ✅ App.jsx에서 내려주는 저장소 파일 목록 (프로젝트 자산)
   repositoryFiles = [],
 }) {
   const [labFiles, setLabFiles] = useState({});
@@ -32,8 +162,8 @@ const LabsView = memo(function LabsView({
   const [matchComplete, setMatchComplete] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  // ✅ 매칭 결과 카드 리스트
   const [matchedLabs, setMatchedLabs] = useState([]);
+  const [scoreTarget, setScoreTarget] = useState(null);
 
   const REQUIRED_DOCS = [
     { id: "lab_spec", category: "필수", name: "제품사양서 (Product Spec)", desc: "제품 제원 및 상세 사양 (.pdf)" },
@@ -42,18 +172,6 @@ const LabsView = memo(function LabsView({
     { id: "lab_bom", category: "필수", name: "부품리스트 (BOM)", desc: "핵심 부품 목록 (.xlsx)" },
     { id: "lab_testplan", category: "선택", name: "시험계획서 (Test Plan)", desc: "자체 시험 계획 및 요구사항 (.docx)" },
   ];
-
-  // ✅ 자동 업로드 매핑: REQUIRED_DOCS.id -> repositoryFiles.slotId
-  const AUTO_MAP = useMemo(
-    () => ({
-      lab_spec: "rt100_spec",
-      lab_manual: "rt100_manual",
-      lab_circuit: "rt100_circuit",
-      lab_bom: "rt100_bom",
-      lab_testplan: "rt100_test_plan",
-    }),
-    []
-  );
 
   const uploadedCount = Object.keys(labFiles).length;
   const canStart = uploadedCount >= 3;
@@ -85,6 +203,7 @@ const LabsView = memo(function LabsView({
     setProgress(0);
     setMatchedLabs([]);
     setRepoModalTarget(null);
+    setScoreTarget(null);
   }, []);
 
   const startMatching = () => {
@@ -103,99 +222,76 @@ const LabsView = memo(function LabsView({
           setIsMatching(false);
           setMatchComplete(true);
 
-          // ✅ 데모 매칭 결과 (사진처럼 + 상세 "보유 인증" + AI 분석)
-          setMatchedLabs([
-            {
-              name: "KTC 군포센터",
-              distance: "10m",
-              car: "15km",
-              price: "1,500만원",
-              period: "2.5개월",
-              tags: ["KOLAS", "UL"],
-
-              // ✅ 보유 인증(카드에 표시)
-              accreditations: ["KOLAS 공인시험기관", "UL 시험 협력 네트워크", "EMC/안전 동시 수행"],
-
-              // ✅ AI 분석(좀 더 구체적으로)
-              ai: {
-                summary: "일정 우선(Lead Time) + 해외 대응 경험이 필요할 때 1순위.",
-                bullets: [
-                  "EU/US 동시 준비를 전제로, 안전(전기/기계) + EMC 시험을 한 기관에서 묶어서 진행 가능(리드타임 단축).",
-                  "제출 서류(사양서/매뉴얼/회로도) 기반으로 필요한 추가 자료(리스크 평가, EHSR/체크리스트) 템플릿 제공 가능.",
-                  "과거 농기계/산업기계류 시험 경험 레퍼런스가 많아, 설계 변경(조치항목) 피드백이 빠른 편.",
-                ],
-                nextDocs: ["회로도 최신본(REV)", "EMC 시험 계획(없으면 템플릿 제공)", "사용자 매뉴얼 경고문(초안)"],
-              },
-            },
-            {
-              name: "KTL 전주본원",
-              distance: "10m",
-              car: "32km",
-              price: "1,200만원",
-              period: "3.0개월",
-              tags: ["KOLAS", "CE"],
-
-              accreditations: ["KOLAS 공인시험기관", "CE 대응 컨설팅 경험", "문서검토(기술문서) 지원"],
-
-              ai: {
-                summary: "비용/문서 완성도 중심(CE 문서 패키지까지 정리)로 가려면 적합.",
-                bullets: [
-                  "CE(기계/EMC) 대응에서 기술문서(TCF) 구성 검토 경험이 많아 서류 완성도에 유리.",
-                  "비용대비 범위가 좋아 예산이 민감한 케이스에서 추천(단, 일정은 보수적으로 산정).",
-                  "BOM/회로도 기반 부품 안전성(인증부품) 확인 프로세스가 체계적이라 리스크 줄이기 좋음.",
-                ],
-                nextDocs: ["BOM(제조사/모델명 포함)", "회로도/블록도", "적용 표준 리스트(초안)"],
-              },
-            },
-            {
-              name: "HCT (민간시험소)",
-              distance: "3m",
-              car: "20km",
-              price: "1,800만원",
-              period: "1.5개월",
-              tags: ["KOLAS"],
-
-              accreditations: ["KOLAS 공인시험", "민간(일정 유연)", "커스텀 시험 설계 가능"],
-
-              ai: {
-                summary: "가장 빠른 일정이 필요하거나, 커스텀 시험/현장 조건 반영이 필요할 때 선택.",
-                bullets: [
-                  "민간기관이라 시험 일정 조정이 유연하고 급행(패스트트랙) 옵션 협의 가능.",
-                  "제품 특성(자율주행/전장/센서 구성)에 맞춘 커스텀 시험 설계(환경/내구/EMC 일부) 협의가 쉬움.",
-                  "단가가 높을 수 있어, ‘기간 단축’의 가치가 큰 프로젝트에서 효율적.",
-                ],
-                nextDocs: ["시험 범위 우선순위(필수/선택)", "현장 환경조건(온도/습도/진동)", "센서/통신 모듈 스펙"],
-              },
-            },
-          ]);
+          const labs = Array.isArray(LABS_DATA) ? LABS_DATA : [];
+          setMatchedLabs(labs.slice(0, 3));
         }, 300);
       }
     }, 30);
   };
 
-  // ✅ 파일저장소 자동 업로드 (저장소 슬롯이 있으면 자동 채움)
+  /* =========================
+     ✅ 핵심 수정: 자동 업로드를 파일명 기반으로!
+     - 너가 올리는 파일 예시(사진):
+       RT100 회로도,블록도.pdf
+       RT100 트랙터 BOM.xlsx
+       RT100 사용자 매뉴얼.pdf
+       RT100 제품사양서.accdb
+       자율주행 트랙터 시험성적서.pdf
+========================= */
   const autoUploadFromRepo = useCallback(() => {
-    const repoBySlot = new Map((repositoryFiles || []).map((r) => [r.slotId, r]));
+    console.log("[Labs AutoUpload] repositoryFiles:", (repositoryFiles || []).map((x) => x?.name));
+
+    const RULES = {
+      lab_spec: {
+        keywords: ["제품사양서", "사양서", "spec", "rt100제품사양서", "rt100"],
+        exts: ["pdf", "rtf", "accdb", "doc", "docx"],
+      },
+      lab_manual: {
+        keywords: ["사용자매뉴얼", "매뉴얼", "manual", "rt100사용자매뉴얼", "rt100"],
+        exts: ["pdf", "rtf", "doc", "docx"],
+      },
+      lab_circuit: {
+        keywords: ["회로도", "블록도", "circuit", "block", "rt100회로도", "rt100"],
+        exts: ["pdf", "dwg", "dxf"],
+      },
+      lab_bom: {
+        keywords: ["bom", "부품", "부품리스트", "rt100트랙터bom", "rt100bom", "rt100"],
+        exts: ["xlsx", "csv"],
+      },
+      lab_testplan: {
+        keywords: ["시험계획서", "testplan", "시험계획", "plan", "rt100"],
+        exts: ["doc", "docx", "pdf", "rtf"],
+      },
+    };
+
+    const next = { ...labFiles };
 
     REQUIRED_DOCS.forEach((doc) => {
-      if (labFiles?.[doc.id]) return; // 이미 업로드된 항목은 skip
-      const slotId = AUTO_MAP[doc.id];
-      if (!slotId) return;
+      if (next[doc.id]) return;
 
-      const hit = repoBySlot.get(slotId);
+      let hit = pickBestFile(repositoryFiles, RULES[doc.id] || { keywords: [doc.name], exts: [] });
+
+      // (선택) 시험계획서 없으면 시험성적서로 대체하고 싶으면 유지
+      // 원치 않으면 아래 블록 삭제
+      if (!hit && doc.id === "lab_testplan") {
+        hit = pickBestFile(repositoryFiles, {
+          keywords: ["시험성적서", "testreport", "성적서", "report", "자율주행트랙터", "rt100"],
+          exts: ["pdf", "rtf", "doc", "docx"],
+        });
+      }
+
+      console.log("[Labs AutoUpload] pick:", doc.id, doc.name, "=>", hit?.name);
+
       if (!hit) return;
-
-      setLabFiles((prev) => ({
-        ...prev,
-        [doc.id]: { name: hit.name, ...hit },
-      }));
+      next[doc.id] = { name: hit.name, ...hit };
     });
-  }, [repositoryFiles, labFiles, AUTO_MAP]);
+
+    setLabFiles(next);
+  }, [repositoryFiles, labFiles, REQUIRED_DOCS]);
 
   const headerTitle = useMemo(() => {
     if (targetCountry === "EU") return "국내 인증기관 매칭 (EU 대응)";
     if (targetCountry === "US") return "국내 인증기관 매칭 (US 대응)";
-    if (targetCountry === "CN") return "국내 인증기관 매칭 (CN 대응)";
     return "국내 인증기관 매칭";
   }, [targetCountry]);
 
@@ -222,7 +318,7 @@ const LabsView = memo(function LabsView({
               >
                 <Wand2 size={16} /> 파일저장소 자동 업로드
               </button>
-              <span className="text-[10px] font-bold text-gray-500">(저장소 슬롯 기반 자동 채움)</span>
+              <span className="text-[10px] font-bold text-gray-500">(프로젝트 자산 파일명 기반 자동 채움)</span>
             </div>
           )}
         </div>
@@ -243,7 +339,6 @@ const LabsView = memo(function LabsView({
             >
               {code === "EU" && "유럽"}
               {code === "US" && "미국"}
-              
             </button>
           ))}
         </div>
@@ -345,15 +440,7 @@ const LabsView = memo(function LabsView({
             <div className="h-96 bg-white rounded-[2rem] border border-gray-100 shadow-xl flex flex-col items-center justify-center p-8 relative overflow-hidden">
               <div className="w-24 h-24 relative mb-6">
                 <svg className="animate-spin w-full h-full text-blue-100" viewBox="0 0 24 24">
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                    fill="none"
-                  />
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                   <path
                     className="opacity-100 text-blue-600"
                     fill="currentColor"
@@ -375,14 +462,13 @@ const LabsView = memo(function LabsView({
         {/* Result */}
         {matchComplete && (
           <div className="space-y-4">
-            {/* ✅ 매칭 완료 섹션: 그린 → 회색 */}
             <div className="bg-white rounded-2xl border border-gray-200 bg-gray-50 p-5 shadow-sm flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <CheckCircle size={28} className="text-gray-600" />
                 <div>
                   <h3 className="text-lg font-bold text-gray-800">매칭 완료</h3>
                   <div className="text-xs text-gray-600 font-semibold mt-1">
-                    (데모) 적합 시험소 3곳을 추천했습니다. 아래에서 비교하세요.
+                    적합 시험소 3곳을 추천했습니다. 아래에서 비교하세요.
                   </div>
                 </div>
               </div>
@@ -398,37 +484,33 @@ const LabsView = memo(function LabsView({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {matchedLabs.map((lab, idx) => (
                 <div
-                  key={idx}
+                  key={lab.id ?? idx}
                   className="relative bg-white rounded-2xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4"
                 >
-                  {/* ✅ 카드 우상단: AI Best Match */}
                   {idx === 0 && (
                     <span className="absolute top-4 right-4 text-[10px] font-black px-2 py-1 rounded-full bg-blue-600 text-white shadow">
                       AI Best Match
                     </span>
                   )}
 
-                  {/* Title */}
                   <div className="flex items-start justify-between pr-2">
-                    <div>
-                      <h4 className="font-bold text-gray-900">{lab.name}</h4>
+                    <div className="min-w-0">
+                      <h4 className="font-bold text-gray-900 truncate">{lab.name}</h4>
                       <div className="text-[11px] text-gray-400 mt-1">
-                        {lab.distance} • Car {lab.car}
+                        {lab.chamber ?? "-"} • {lab.distance ?? "-"}
                       </div>
                     </div>
                   </div>
 
-                  {/* Price/Period */}
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div className="text-gray-500">예상 견적</div>
-                    <div className="text-right font-bold text-gray-900">{lab.price}</div>
+                    <div className="text-right font-bold text-gray-900">{lab.costDisplay ?? "-"}</div>
                     <div className="text-gray-500">소요 기간</div>
-                    <div className="text-right font-bold text-gray-900">{lab.period}</div>
+                    <div className="text-right font-bold text-gray-900">{lab.durationDisplay ?? "-"}</div>
                   </div>
 
-                  {/* Tags */}
                   <div className="flex flex-wrap gap-2">
-                    {lab.tags.map((t) => (
+                    {(lab.tags || []).map((t) => (
                       <span
                         key={t}
                         className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100"
@@ -438,46 +520,75 @@ const LabsView = memo(function LabsView({
                     ))}
                   </div>
 
-                  {/* ✅ 보유 인증 (더 구체적으로) */}
                   <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-3">
                     <div className="flex items-center gap-2 mb-2">
                       <ShieldCheck size={14} className="text-gray-600" />
                       <span className="text-[11px] font-black text-gray-700">보유 인증 / 역량</span>
                     </div>
-                    <ul className="space-y-1">
-                      {(lab.accreditations || []).map((a, i) => (
-                        <li key={i} className="text-[11px] text-gray-600 leading-relaxed flex gap-2">
-                          <span className="mt-[6px] w-1.5 h-1.5 rounded-full bg-gray-300 shrink-0" />
-                          <span>{a}</span>
-                        </li>
-                      ))}
-                    </ul>
+
+                    {Array.isArray(lab.accreditations) && lab.accreditations.length > 0 ? (
+                      <ul className="space-y-1">
+                        {lab.accreditations.map((a, i) => (
+                          <li key={i} className="text-[11px] text-gray-600 leading-relaxed flex gap-2">
+                            <span className="mt-[6px] w-1.5 h-1.5 rounded-full bg-gray-300 shrink-0" />
+                            <span>{a}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div className="text-[11px] text-gray-600 leading-relaxed">{lab.cert ?? "인증 정보 없음"}</div>
+                    )}
                   </div>
 
-                  {/* ✅ AI 분석 (구체적으로) */}
                   <div className="rounded-xl border border-gray-200 bg-white p-3">
                     <div className="flex items-center gap-2 mb-2">
                       <Sparkles size={14} className="text-blue-600" />
                       <span className="text-[11px] font-black text-gray-800">AI 분석</span>
                     </div>
 
-                    <div className="text-[11px] text-gray-700 font-bold mb-2">{lab.ai?.summary}</div>
+                    {lab.ai?.summary ? (
+                      <>
+                        <div className="text-[11px] text-gray-800 font-bold mb-2">{lab.ai.summary}</div>
 
-                    <ul className="space-y-1.5 mb-3">
-                      {(lab.ai?.bullets || []).map((b, i) => (
-                        <li key={i} className="text-[11px] text-gray-600 leading-relaxed flex gap-2">
-                          <span className="mt-[6px] w-1.5 h-1.5 rounded-full bg-blue-200 shrink-0" />
-                          <span>{b}</span>
-                        </li>
-                      ))}
-                    </ul>
+                        {Array.isArray(lab.ai?.bullets) && lab.ai.bullets.length > 0 && (
+                          <ul className="space-y-1.5 mb-2">
+                            {lab.ai.bullets.map((b, i) => (
+                              <li key={i} className="text-[11px] text-gray-600 leading-relaxed flex gap-2">
+                                <span className="mt-[6px] w-1.5 h-1.5 rounded-full bg-blue-200 shrink-0" />
+                                <span>{b}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
 
-                    
+                        {Array.isArray(lab.ai?.nextDocs) && lab.ai.nextDocs.length > 0 && (
+                          <div className="mt-2 text-[11px] text-gray-500">
+                            <span className="font-black text-gray-700">다음 필요 서류:</span> {lab.ai.nextDocs.join(", ")}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-[11px] text-gray-600 leading-relaxed">{lab.reason ?? "-"}</div>
+                    )}
                   </div>
 
-                  {/* CTA */}
-                  <button className="mt-1 w-full px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700">
-                    상담 예약하기
+                  <a
+                    href={lab.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={`mt-1 w-full px-4 py-2 rounded-xl text-white text-xs font-black text-center ${
+                      lab.url ? "bg-blue-600 hover:bg-blue-700" : "bg-gray-200 text-gray-400 pointer-events-none"
+                    }`}
+                  >
+                    사이트로 이동하기
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={() => setScoreTarget(lab)}
+                    className="w-full px-4 py-2 rounded-xl bg-white border border-gray-200 text-gray-700 text-xs font-black hover:bg-gray-50"
+                  >
+                    스코어링 보기
                   </button>
                 </div>
               ))}
@@ -502,6 +613,9 @@ const LabsView = memo(function LabsView({
           </div>
         </div>
       )}
+
+      {/* ✅ 스코어링 모달 */}
+      {scoreTarget && <ScoreModal lab={scoreTarget} onClose={() => setScoreTarget(null)} />}
     </div>
   );
 });

@@ -12,9 +12,11 @@ import RepositoryView from "../components/RepositoryView";
 import { DOC_PROCESS_CONFIG } from "../data/mock";
 
 const DashboardView = memo(function DashboardView({
+  projectName,
   uploadedFiles = {},
   repositoryFiles = [],
   onUploadToSlot,
+  onRemoveRepositoryFile,
 
   /** ⭐ App.jsx에서 내려줌 (["EU","US"]) */
   markets = ["EU", "US"],
@@ -48,14 +50,11 @@ const DashboardView = memo(function DashboardView({
   /** =========================
    *  규제 진단 Action Items
    * ========================= */
-  const remediationItems =
-    remediationByMarket?.[activeRemediationTab] || [];
+  const remediationItems = remediationByMarket?.[activeRemediationTab] || [];
 
   const remediationProgress = useMemo(() => {
     if (!remediationItems.length) return 0;
-    const done = remediationItems.filter(
-      (i) => i.status === "done"
-    ).length;
+    const done = remediationItems.filter((i) => i.status === "done").length;
     return Math.round((done / remediationItems.length) * 100) || 0;
   }, [remediationItems]);
 
@@ -68,12 +67,19 @@ const DashboardView = memo(function DashboardView({
             안녕하세요, 김대동님 👋
           </h1>
           <p className="text-gray-500 text-sm font-medium">
-            진행 중인{" "}
-            <span className="text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded-lg">
-              '자율주행 트랙터 X1'
-            </span>{" "}
-            인증 현황입니다.
-          </p>
+  {projectName ? (
+    <>
+      진행 중인{" "}
+      <span className="text-blue-600 font-bold bg-blue-50 px-2 py-0.5 rounded-lg">
+        {projectName}
+      </span>{" "}
+      인증 현황입니다.
+    </>
+  ) : (
+    <>진행 중인 프로젝트를 생성해주세요.</>
+  )}
+</p>
+
         </div>
       </div>
 
@@ -112,7 +118,7 @@ const DashboardView = memo(function DashboardView({
                   <div>
                     <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                       <Wrench size={20} className="text-blue-500" />
-                      규제 진단 조치율
+                      설계 적합성 검증 진행도
                     </h3>
                     <p className="text-xs text-gray-500 mt-1">
                       규제 진단 후{" "}
@@ -141,11 +147,7 @@ const DashboardView = memo(function DashboardView({
                     조치 필요
                   </div>
                   <div className="text-base font-black text-blue-600">
-                    {
-                      remediationItems.filter(
-                        (i) => i.status !== "done"
-                      ).length
-                    }
+                    {remediationItems.filter((i) => i.status !== "done").length}
                   </div>
                 </div>
                 <div className="p-3 bg-blue-50 rounded-2xl border border-blue-100 text-center min-w-[90px]">
@@ -153,11 +155,7 @@ const DashboardView = memo(function DashboardView({
                     조치 완료
                   </div>
                   <div className="text-base font-black text-blue-600">
-                    {
-                      remediationItems.filter(
-                        (i) => i.status === "done"
-                      ).length
-                    }
+                    {remediationItems.filter((i) => i.status === "done").length}
                   </div>
                 </div>
               </div>
@@ -244,10 +242,7 @@ const DashboardView = memo(function DashboardView({
                             )}
                             {item.status === "in_progress" && (
                               <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
-                                <Loader2
-                                  size={10}
-                                  className="animate-spin"
-                                />
+                                <Loader2 size={10} className="animate-spin" />
                                 진행중
                               </span>
                             )}
@@ -357,13 +352,15 @@ const DashboardView = memo(function DashboardView({
       </div>
 
       {/* =========================
-          Repository (하단)
+          Repository (하단) - 여기서 "프로젝트 자산" 업로드/체크리스트 처리
       ========================= */}
       <RepositoryView
         files={repositoryFiles}
         onUploadToSlot={onUploadToSlot}
+        onRemoveFile={onRemoveRepositoryFile} 
         heightClass="h-[calc(100vh-240px)] min-h-[780px]"
         enableExpand={true}
+        markets={markets}
       />
     </div>
   );

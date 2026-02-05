@@ -69,7 +69,7 @@ export const PROJECTS = [
         { id: "us_admin_1", name: "대리인 지정 위임장", desc: "현지 TCB/시험소 제출 권한 위임 서류", required: true, iconKey: "FilePenLine" },
         { id: "us_admin_2", name: "기밀 유지 요청서", desc: "회로도/블록도 FCC 비공개 요청", required: true, iconKey: "Lock" },
         { id: "us_admin_3", name: "인증 신청서 (Form 731)", desc: "FCC 공식 인증 신청 양식", required: true, iconKey: "FileText" },
-        { id: "us_admin_4", name: "초기 공장 심사(IPI) 체크리스트", desc: "장비 교정 및 부품 현장 점검 리스트", required: false, iconKey: "Factory" },
+        
       ],
       generatedOutputs: [
         { name: "Construction_Data_Report(CDR).pdf", type: "CDR", desc: "UL 승인용 구조 검토 완료 보고서", size: "3.5MB" },
@@ -125,6 +125,28 @@ export const PROJECTS = [
       tags: ["Best Match", "Large Chamber"],
       scores: { tech: 99, cost: 85, time: 90, dist: 95 },
       reason: "귀사의 로봇 크기(2m)를 수용 가능한 10m 챔버를 보유하고 있으며, 타겟 국가(EU) 인증 경험이 가장 풍부합니다.",
+  
+      // ✅ 추가: 보유 인증/역량
+      accreditations: ["KOLAS 공인시험기관", "UL 시험 협력 네트워크", "EMC/안전 동시 수행"],
+  
+      // ✅ 추가: AI 분석
+      ai: {
+        summary: "일정 우선(Lead Time) + 해외 대응 경험이 필요할 때 1순위.",
+        bullets: [
+          "EU/US 동시 준비 전제: 안전(전기/기계)+EMC를 한 기관에서 묶어 리드타임 단축 가능.",
+          "사양서/매뉴얼/회로도 기반으로 추가 자료(리스크 평가, EHSR 체크리스트) 템플릿 제공 가능.",
+          "농기계/산업기계 시험 레퍼런스가 많아 설계 변경(조치항목) 피드백이 빠른 편.",
+        ],
+        nextDocs: ["회로도 최신본(REV)", "EMC 시험 계획(없으면 템플릿)", "매뉴얼 경고문(초안)"],
+      },
+  
+      // ✅ 추가: 4가지 스코어링
+      scoring: {
+        cost: 85, // 비용 점수
+        leadTime: 90, // 리드타임 점수
+        successRate: 92, // 과거 인증성공률 점수
+        testField: 99, // 시험분야 적합 점수
+      },
     },
     {
       id: 2,
@@ -141,6 +163,23 @@ export const PROJECTS = [
       tags: ["Lowest Cost"],
       scores: { tech: 99, cost: 95, time: 80, dist: 40 },
       reason: "비용은 가장 저렴하나, 거리가 멀어(320km) 시료 운송 비용 및 엔지니어 출장 부담이 발생할 수 있습니다.",
+  
+      accreditations: ["KOLAS 공인시험기관", "CE 대응 컨설팅 경험", "문서검토(기술문서) 지원"],
+      ai: {
+        summary: "비용/문서 완성도 중심(CE 문서 패키지까지 정리)로 가려면 적합.",
+        bullets: [
+          "CE(기계/EMC) 대응에서 기술문서(TCF) 구성 검토 경험이 많아 서류 완성도에 유리.",
+          "비용대비 범위가 좋아 예산이 민감한 케이스에서 추천(단, 일정은 보수적으로 산정).",
+          "BOM/회로도 기반 부품 안전성(인증부품) 확인 프로세스가 체계적이라 리스크 줄이기 좋음.",
+        ],
+        nextDocs: ["BOM(제조사/모델명 포함)", "회로도/블록도", "적용 표준 리스트(초안)"],
+      },
+      scoring: {
+        cost: 95,
+        leadTime: 80,
+        successRate: 85,
+        testField: 92,
+      },
     },
     {
       id: 3,
@@ -157,6 +196,22 @@ export const PROJECTS = [
       tags: ["Fastest"],
       scores: { tech: 60, cost: 70, time: 99, dist: 90 },
       reason: "일정은 가장 빠르나, 보유 챔버(3m)가 로봇 크기에 비해 협소하여 사전 기술 미팅이 필수적입니다.",
+  
+      accreditations: ["KOLAS 공인시험", "민간(일정 유연)", "커스텀 시험 설계 가능"],
+      ai: {
+        summary: "가장 빠른 일정이 필요하거나, 커스텀 시험/현장 조건 반영이 필요할 때 선택.",
+        bullets: [
+          "민간기관이라 시험 일정 조정이 유연하고 급행(패스트트랙) 옵션 협의 가능.",
+          "자율주행/전장/센서 구성에 맞춘 커스텀 시험 설계(환경/내구/EMC 일부) 협의가 쉬움.",
+          "단가가 높을 수 있어 ‘기간 단축’ 가치가 큰 프로젝트에서 효율적.",
+        ],
+        nextDocs: ["시험 범위 우선순위(필수/선택)", "현장 환경조건(온도/습도/진동)", "센서/통신 모듈 스펙"],
+      },
+      scoring: {
+        cost: 70,
+        leadTime: 99,
+        successRate: 78,
+        testField: 75,
+      },
     },
   ];
-  

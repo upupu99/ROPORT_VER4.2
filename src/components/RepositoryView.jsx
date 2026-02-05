@@ -1,248 +1,493 @@
 // src/components/RepositoryView.jsx
-import React, { memo, useMemo, useState } from "react";
-import { Database, UploadCloud, CheckCircle2, Maximize2, X } from "lucide-react";
+import React, { memo, useMemo, useRef, useState } from "react";
+import {
+  UploadCloud,
+  Database,
+  ClipboardList,
+  X,
+  CheckCircle2,
+  Download,
+} from "lucide-react";
 
-/**
- * RepositoryView
- *
- * mode:
- *  - "manage" (default): 저장소 관리 (내 PC 업로드/교체)
- *  - "picker": 저장소에 "이미 업로드된 파일(r.file)"을 선택해서 특정 슬롯(targetSlotId)에 꽂기
- *
- * props:
- *  - files: [{ id, name, type, slotId, file? }]
- *  - onUploadToSlot(slotId, file): 업로드 슬롯에 파일 꽂기 (기존 로직)
- *
- * picker mode only:
- *  - targetSlotId: picker에서 선택한 파일을 꽂을 슬롯 id
- *  - onPickFile(file): 선택한 저장소 파일을 부모가 어떻게 처리할지(보통 onUploadToSlot(targetSlotId, file))
- *  - onClose(): picker 모달 닫기
- */
+/** =========================
+ * ✅ 고정 체크/매칭 대상 10개 (EU만)
+ * - 이 10개만 "업로드율(진행률)" 계산
+ * - 이 10개만 체크리스트에 표시
+ * ========================= */
+const FIXED_DOCS_EU = [
+  "RT100 트랙터 CAD",
+  "RT100 트랙터 BOM",
+  "RT100 제품사양서",
+  "RT100 회로도/블록도",
+  "RT 100 시험계획서",
+  "RT100 사용자 매뉴얼",
+  "자율주행 트랙터 시험성적서",
+  "유럽대리인계약서",
+  "RT100 EHSR 체크리스트",
+  "RT 100 위험성 평가서 기초자료 (ISO 12100)",
+];
+
+/** 파일명 정규화 (확장자 제거 + 공백 정리) */
+function normalizeName(s = "") {
+  return String(s)
+    .toLowerCase()
+    .replace(/\.[a-z0-9]+$/i, "") // 확장자 제거
+    .replace(/[_\-]+/g, " ")
+    .replace(/[^\w\s가-힣]/g, " ") // 한글 포함
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** bytes -> human */
+function humanSize(bytes = 0) {
+  const b = Number(bytes) || 0;
+  if (b < 1024) return `${b} B`;
+  const kb = b / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  const gb = mb / 1024;
+  return `${gb.toFixed(2)} GB`;
+}
+
+/** files props를 표기용으로 정리 */
+function normalizeFiles(files) {
+  const arr = Array.isArray(files) ? files : [];
+  return arr
+    .map((f, idx) => {
+      if (!f) return null;
+      const name = f.name || f.filename || f.originalName || `file-${idx}`;
+      const size = f.size ?? f.bytes ?? 0;
+
+      return {
+        id: f.id || `${name}-${idx}`,
+        name,
+        size,
+        raw: f,
+      };
+    })
+    .filter(Boolean);
+}
+
 const RepositoryView = memo(function RepositoryView({
+  mode = "default",
   files = [],
   onUploadToSlot,
-
-  // layout
-  heightClass = "h-[760px]",
-  enableExpand = true,
-
-  // mode
-  mode = "manage", // "manage" | "picker"
-
-  // picker-only
-  targetSlotId = null,
+  onRemoveFile,
   onPickFile,
   onClose,
+  onDownloadFile, // ✅ 추가 (없으면 alert로 대체)
+  heightClass = "h-[760px]",
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const rows = useMemo(() => files || [], [files]);
+  const inputRef = useRef(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [checklistOpen, setChecklistOpen] = useState(false);
+
+  const rows = useMemo(() => normalizeFiles(files), [files]);
+  const uploadedNames = useMemo(() => rows.map((r) => r.name), [rows]);
+
+  /** ✅ 10개 고정 문서 Set */
+  const requiredSet = useMemo(
+    () => new Set(FIXED_DOCS_EU.map(normalizeName)),
+    []
+  );
+
+  /** ✅ 업로드된 파일 중, 10개 문서에 해당하는 것만 추림 */
+  const uploadedAllowedNames = useMemo(() => {
+    return uploadedNames.filter((name) => requiredSet.has(normalizeName(name)));
+  }, [uploadedNames, requiredSet]);
+
+  /** ✅ 체크리스트/진행률 계산 (EU 고정 10개 기준) */
+  const checklist = useMemo(() => {
+    const matchedMap = {}; // key: normalized required doc, value: original uploaded filename
+
+    for (const up of uploadedAllowedNames) {
+      const n = normalizeName(up);
+      if (!matchedMap[n]) matchedMap[n] = up; // 첫 번째만 인정
+    }
+
+    const total = FIXED_DOCS_EU.length;
+    const done = Object.keys(matchedMap).length;
+    const percent = total === 0 ? 0 : Math.round((done / total) * 100);
+
+    const list = FIXED_DOCS_EU.map((label) => {
+      const key = normalizeName(label);
+      return {
+        id: key,
+        label,
+        hit: matchedMap[key] || null,
+      };
+    });
+
+    return { list, matchedMap, total, done, percent };
+  }, [uploadedAllowedNames]);
+
+  /** ✅ 업로드 처리 */
+  const handleFiles = (fileList) => {
+    const list = Array.from(fileList || []);
+    if (list.length === 0) return;
+
+    if (typeof onUploadToSlot === "function") {
+      list.forEach((f) => onUploadToSlot(f));
+    }
+  };
+
+  /** ✅ “다운로드 버튼” 클릭 (UI만) */
+  const handleDownload = (row) => {
+    if (typeof onDownloadFile === "function") {
+      onDownloadFile(row.raw);
+      return;
+    }
+    // 실제 다운로드 기능은 없어도 된다고 했으니 UI 동작만
+    alert(`다운로드(UI): ${row.name}`);
+  };
+
+  /** ✅ 드래그&드롭 */
+  const onDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    if (!e.dataTransfer?.files?.length) return;
+    handleFiles(e.dataTransfer.files);
+  };
 
   const isPicker = mode === "picker";
 
-  const handlePick = (row) => {
-    // picker에서는 저장소에 "이미 업로드된 파일"만 선택 가능
-    if (!row?.file) return;
+  /** ✅ 체크리스트 모달 (EU만) */
+  const ChecklistModal = checklistOpen ? (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center">
+      <div
+        className="absolute inset-0 bg-black/35"
+        onClick={() => setChecklistOpen(false)}
+      />
+      <div className="relative w-[min(920px,92vw)] max-h-[84vh] bg-white rounded-3xl shadow-xl border border-gray-200 overflow-hidden">
+        <div className="p-6 border-b border-gray-100 bg-gray-50/60 flex items-start justify-between gap-4">
+          <div>
+            <div className="text-lg font-black text-gray-900">
+              문서 체크리스트 (EU)
+            </div>
+            <div className="text-xs text-gray-500 mt-1">
+              ✅ 아래 10개 문서명과 업로드 파일명이 (확장자 제외 / 공백 정리 후)
+              정확히 일치할 때만 체크됩니다.
+            </div>
+          </div>
+          <button
+            onClick={() => setChecklistOpen(false)}
+            className="p-2 rounded-xl hover:bg-gray-100 transition"
+            aria-label="close"
+          >
+            <X size={18} className="text-gray-600" />
+          </button>
+        </div>
 
-    // 1) picker 전용 콜백이 있으면 우선 사용
-    if (onPickFile) {
-      onPickFile(row.file, row);
-      return;
-    }
+        <div className="p-6 pb-4 flex items-center justify-between gap-3 flex-wrap">
+          <div className="text-sm font-black text-gray-800">업로드 진행률</div>
 
-    // 2) 없으면 targetSlotId 기준으로 기존 onUploadToSlot에 꽂기
-    if (!targetSlotId) return;
-    onUploadToSlot?.(targetSlotId, row.file);
-  };
+          <div className="min-w-[260px]">
+            <div className="flex items-end justify-between mb-2">
+              <div className="text-xs font-bold text-gray-600">진행</div>
+              <div className="text-sm font-black text-blue-600">
+                {checklist.done}/{checklist.total} ({checklist.percent}%)
+              </div>
+            </div>
+            <div className="w-full bg-gray-100 h-2.5 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-blue-600 rounded-full transition-all duration-500"
+                style={{ width: `${checklist.percent}%` }}
+              />
+            </div>
+          </div>
+        </div>
 
-  const TableContent = ({ heightClassOverride }) => (
+        <div className="px-6 pb-6 overflow-y-auto custom-scrollbar max-h-[60vh]">
+          <div className="border border-gray-200 rounded-2xl overflow-hidden">
+            <table className="w-full text-left">
+              <thead className="bg-gray-50 sticky top-0 z-10">
+                <tr>
+                  <th className="p-4 text-xs font-black text-gray-500 border-b w-[56px] text-center">
+                    상태
+                  </th>
+                  <th className="p-4 text-xs font-black text-gray-500 border-b">
+                    필요 문서
+                  </th>
+                  <th className="p-4 text-xs font-black text-gray-500 border-b">
+                    매칭된 파일명
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {checklist.list.map((item) => {
+                  const done = Boolean(item.hit);
+                  return (
+                    <tr key={item.id} className="hover:bg-gray-50/60">
+                      <td className="p-4 text-center">
+                        {done ? (
+                          <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-green-50 border border-green-100">
+                            <CheckCircle2
+                              size={16}
+                              className="text-green-600"
+                            />
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-gray-50 border border-gray-200">
+                            <span className="text-[10px] font-black text-gray-400">
+                              —
+                            </span>
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-4">
+                        <div className="text-sm font-black text-gray-800">
+                          {item.label}
+                        </div>
+                      </td>
+                      <td className="p-4">
+                        {done ? (
+                          <div className="text-xs font-bold text-gray-700">
+                            {item.hit}
+                          </div>
+                        ) : (
+                          <div className="text-xs font-bold text-gray-400">
+                            아직 매칭된 파일이 없습니다.
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-4 text-[11px] text-gray-500">
+            * 미국(US) 체크리스트는 현재 제외되어 EU 10개 문서만 기준으로
+            계산합니다.
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  return (
     <div
-      className={`bg-white rounded-[2rem] border border-gray-200 shadow-sm overflow-hidden flex flex-col ${
-        heightClassOverride || heightClass
-      }`}
+      className={`bg-white rounded-[2rem] border border-gray-200 shadow-sm overflow-hidden flex flex-col ${heightClass}`}
     >
       {/* Header */}
       <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
         <div>
           <h3 className="font-black text-gray-800 text-lg flex items-center gap-2">
             <Database size={20} className="text-blue-500" />
-            {isPicker ? "파일 저장소에서 선택" : "파일 저장소 (RT100 기본 목록)"}
+            프로젝트 자산
           </h3>
-
           <p className="text-xs text-gray-500 mt-1">
             {isPicker
-              ? "저장소에 업로드된 파일을 선택하여 해당 항목(슬롯)에 연결합니다."
-              : "각 항목별로 내 PC에서 파일을 업로드하면 슬롯이 채워집니다."}
+              ? "저장소에서 파일을 선택하세요."
+              : "아래 영역에 드래그&드롭하거나, 오른쪽 상단 버튼으로 업로드하세요."}
           </p>
-
-          {isPicker && (
-            <p className="text-[10px] text-gray-400 mt-2">
-              대상 슬롯:{" "}
-              <span className="font-black text-gray-700">
-                {targetSlotId ? targetSlotId : "미지정(부모에서 targetSlotId 전달 필요)"}
-              </span>
-            </p>
-          )}
         </div>
 
-        {/* 우측 버튼 영역 */}
         <div className="flex items-center gap-2">
+          {!isPicker && (
+            <button
+              onClick={() => setChecklistOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-gray-200 shadow-sm hover:bg-gray-50 transition text-sm font-black text-gray-700"
+            >
+              <ClipboardList size={16} className="text-blue-600" />
+              문서 체크리스트
+            </button>
+          )}
+
+          {!isPicker && (
+            <>
+              <button
+                onClick={() => inputRef.current?.click()}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 transition text-sm font-black text-white shadow-sm"
+              >
+                <UploadCloud size={16} />
+                파일 업로드
+              </button>
+              <input
+                ref={inputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => handleFiles(e.target.files)}
+              />
+            </>
+          )}
+
           {isPicker && (
             <button
-              onClick={() => (onClose ? onClose() : setExpanded(false))}
-              className="px-3 py-2 rounded-xl text-xs font-black bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+              onClick={onClose}
+              className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-white border border-gray-200 hover:bg-gray-50 transition"
+              aria-label="close"
+              title="닫기"
             >
-              <X size={16} /> 닫기
-            </button>
-          )}
-
-          {enableExpand && !isPicker && (
-            <button
-              onClick={() => setExpanded(true)}
-              className="px-3 py-2 rounded-xl text-xs font-black bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-            >
-              <Maximize2 size={16} /> 확대
+              <X size={18} className="text-gray-600" />
             </button>
           )}
         </div>
       </div>
 
-      {/* Table */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar">
-        <table className="w-full text-left">
-          <thead className="bg-gray-50 sticky top-0 z-10">
-            <tr>
-              <th className="p-4 text-xs font-bold text-gray-500 border-b">필수 파일명</th>
-              <th className="p-4 text-xs font-bold text-gray-500 border-b w-24">유형</th>
-              <th className="p-4 text-xs font-bold text-gray-500 border-b w-28 text-center">상태</th>
-
-              {/* manage 모드: 업로드 / picker 모드: 선택 */}
-              <th className="p-4 text-xs font-bold text-gray-500 border-b w-44 text-center">
-                {isPicker ? "선택" : "업로드"}
-              </th>
-            </tr>
-          </thead>
-
-          <tbody className="divide-y divide-gray-100">
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="p-10 text-center text-gray-400 text-sm">
-                  저장소에 표시할 항목이 없습니다.
-                  <div className="text-xs mt-1">files props가 비어있는지 확인하세요.</div>
-                </td>
-              </tr>
-            ) : (
-              rows.map((r) => {
-                const filled = Boolean(r.file);
-
-                return (
-                  <tr key={r.id ?? `${r.name}-${r.slotId}`} className="hover:bg-gray-50 transition-colors">
-                    <td className="p-4">
-                      <div className="text-sm font-black text-gray-800">{r.name}</div>
-                      <div className="text-[10px] text-gray-400 mt-1">
-                        {filled ? `업로드됨: ${r.file.name}` : "아직 업로드되지 않음"}
-                      </div>
-                    </td>
-
-                    <td className="p-4">
-                      <span className="text-[10px] font-black px-2 py-1 rounded-lg bg-gray-100 border border-gray-200">
-                        {r.type}
-                      </span>
-                    </td>
-
-                    <td className="p-4 text-center">
-                      {filled ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-black text-green-700 bg-green-50 px-2 py-1 rounded-full border border-green-100">
-                          <CheckCircle2 size={14} /> 완료
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-black text-gray-500 bg-gray-100 px-2 py-1 rounded-full border border-gray-200">
-                          미등록
-                        </span>
-                      )}
-                    </td>
-
-                    {/* ACTION */}
-                    <td className="p-4 text-center">
-                      {/* picker 모드: 저장소 파일 선택 */}
-                      {isPicker ? (
-                        <button
-                          type="button"
-                          disabled={!filled || (!onPickFile && !targetSlotId)}
-                          onClick={() => handlePick(r)}
-                          className={`inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-black border transition ${
-                            filled && (onPickFile || targetSlotId)
-                              ? "bg-blue-600 text-white border-blue-600 hover:bg-blue-700"
-                              : "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
-                          }`}
-                          title={
-                            !filled
-                              ? "저장소에 업로드된 파일이 있어야 선택할 수 있습니다."
-                              : !onPickFile && !targetSlotId
-                              ? "targetSlotId 또는 onPickFile이 필요합니다."
-                              : "선택하여 해당 슬롯에 연결"
-                          }
-                        >
-                          선택
-                        </button>
-                      ) : (
-                        // manage 모드: 내 PC 업로드/교체 (기존 로직 유지)
-                        <label
-                          className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-black cursor-pointer border ${
-                            filled
-                              ? "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
-                              : "bg-blue-600 text-white border-blue-600 hover:bg-blue-700"
-                          }`}
-                        >
-                          <UploadCloud size={16} />
-                          {filled ? "파일 교체" : "내 PC 업로드"}
-                          <input
-                            type="file"
-                            className="hidden"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (!file) return;
-
-                              // ✅ r.slotId가 실제 슬롯 id여야 함 (없으면 업로드가 안 됨)
-                              onUploadToSlot?.(r.slotId, file);
-                              e.target.value = "";
-                            }}
-                          />
-                        </label>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Bottom spacing */}
-      <div className="h-16" />
-    </div>
-  );
-
-  // picker 모드는 보통 "부모가 이미 모달로 띄워주는" 구조라 expanded 기능 불필요
-  if (isPicker) return <TableContent />;
-
-  if (!expanded) return <TableContent />;
-
-  // expanded modal (manage 모드에서만)
-  return (
-    <div className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm p-6 flex items-center justify-center">
-      <div className="w-[1100px] max-w-[95vw]">
-        <div className="mb-3 flex justify-end">
-          <button
-            onClick={() => setExpanded(false)}
-            className="px-3 py-2 rounded-xl text-xs font-black bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+      {/* Body */}
+      <div className="p-6 flex-1 min-h-0 overflow-hidden">
+        {!isPicker ? (
+          <div
+            onDragEnter={() => setDragOver(true)}
+            onDragLeave={() => setDragOver(false)}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onDrop={onDrop}
+            className={`h-full rounded-3xl border transition overflow-hidden flex flex-col ${
+              dragOver ? "border-blue-300 bg-blue-50/30" : "border-gray-200 bg-white"
+            }`}
           >
-            <X size={16} /> 닫기
-          </button>
-        </div>
+            <div
+              className={`px-5 py-4 border-b ${
+                dragOver ? "border-blue-100" : "border-gray-100"
+              }`}
+            >
+              <div className="text-sm font-black text-gray-800 flex items-center gap-2">
+                <UploadCloud
+                  size={16}
+                  className={dragOver ? "text-blue-600" : "text-gray-500"}
+                />
+                {dragOver ? "여기에 놓으면 업로드됩니다" : "여기로 드래그&드롭 업로드"}
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                (또는 오른쪽 상단 “파일 업로드” 버튼)
+              </div>
+            </div>
 
-        <TableContent heightClassOverride="h-[78vh]" />
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+              <table className="w-full text-left">
+                <thead className="bg-gray-50 sticky top-0 z-10">
+                  <tr>
+                    <th className="p-4 text-xs font-black text-gray-500 border-b">
+                      파일명
+                    </th>
+                    <th className="p-4 text-xs font-black text-gray-500 border-b w-[140px] text-right">
+                      크기
+                    </th>
+                    {/* ✅ 프로젝트 자산(통합화면)에서만 다운로드 버튼 */}
+                    <th className="p-4 text-xs font-black text-gray-500 border-b w-[88px] text-center">
+                      다운로드
+                    </th>
+                    <th className="p-4 text-xs font-black text-gray-500 border-b w-[56px] text-center">
+                      삭제
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="p-10 text-center text-gray-400 text-sm">
+                        아직 업로드된 파일이 없습니다.
+                        <div className="text-xs mt-2">
+                          이 박스에 드래그&드롭 해보세요.
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    rows.map((r) => (
+                      <tr key={r.id} className="hover:bg-gray-50/60">
+                        <td className="p-4">
+                          <div className="text-sm font-black text-gray-800">
+                            {r.name}
+                          </div>
+                        </td>
+                        <td className="p-4 text-right text-xs font-bold text-gray-600">
+                          {humanSize(r.size)}
+                        </td>
+
+                        <td className="p-4 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleDownload(r)}
+                            className="inline-flex items-center justify-center w-9 h-9 rounded-xl border border-gray-200 hover:bg-gray-100 transition"
+                            aria-label="download"
+                            title="다운로드"
+                          >
+                            <Download size={16} className="text-gray-600" />
+                          </button>
+                        </td>
+
+                        <td className="p-4 text-center">
+                          <button
+                            onClick={() => onRemoveFile?.(r.id)}
+                            className="inline-flex items-center justify-center w-8 h-8 rounded-xl border border-gray-200 hover:bg-gray-100 transition"
+                            aria-label="remove"
+                            title="삭제"
+                          >
+                            <X size={16} className="text-gray-500" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          // picker 모드
+          <div className="h-full rounded-3xl border border-gray-200 overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+              <table className="w-full text-left">
+                <thead className="bg-gray-50 sticky top-0 z-10">
+                  <tr>
+                    <th className="p-4 text-xs font-black text-gray-500 border-b">
+                      파일명
+                    </th>
+                    <th className="p-4 text-xs font-black text-gray-500 border-b w-[140px] text-right">
+                      크기
+                    </th>
+                    <th className="p-4 text-xs font-black text-gray-500 border-b w-[120px] text-center">
+                      선택
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-gray-100">
+                  {rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="p-10 text-center text-gray-400 text-sm">
+                        저장소에 파일이 없습니다.
+                      </td>
+                    </tr>
+                  ) : (
+                    rows.map((r) => (
+                      <tr key={r.id} className="hover:bg-blue-50/30">
+                        <td className="p-4">
+                          <div className="text-sm font-black text-gray-800">
+                            {r.name}
+                          </div>
+                        </td>
+                        <td className="p-4 text-right text-xs font-bold text-gray-600">
+                          {humanSize(r.size)}
+                        </td>
+                        <td className="p-4 text-center">
+                          <button
+                            type="button"
+                            onClick={() => onPickFile?.(r.raw)}
+                            className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black"
+                          >
+                            선택
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
+
+      {ChecklistModal}
     </div>
   );
 });

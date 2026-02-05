@@ -146,11 +146,16 @@ function buildActionItemsFromResults(schema, market, resultsById) {
 /** --------------------------
  * Repo Auto Upload Helpers
  * -------------------------- */
+// ✅ 파일명 기반으로 저장소에서 가장 유사한 파일 찾기
 const norm = (s = "") =>
-  String(s).toLowerCase().replace(/\s+/g, "").replace(/_/g, "").replace(/-/g, "");
+  String(s)
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/_/g, "")
+    .replace(/-/g, "");
 
-function pickBestFile(repositoryFiles, keywords = []) {
-  const ks = keywords.map(norm);
+function pickBestFileByKeywords(repositoryFiles, keywords = []) {
+  const ks = (keywords || []).map(norm).filter(Boolean);
   let best = null;
   let bestScore = -1;
 
@@ -159,26 +164,25 @@ function pickBestFile(repositoryFiles, keywords = []) {
     let score = 0;
 
     for (const k of ks) {
-      if (!k) continue;
       if (name.includes(k)) score += 10;
     }
 
-    // 확장자 힌트(살짝 가산점)
-    if (ks.some((k) => k.includes(".xlsx") || k.includes(".csv")) && (name.includes(".xlsx") || name.includes(".csv")))
-      score += 2;
-    if (
-      ks.some((k) => k.includes(".stp") || k.includes(".step") || k.includes(".dwg")) &&
-      (name.includes(".stp") || name.includes(".step") || name.includes(".dwg"))
-    )
-      score += 2;
+    // 확장자 가산점
+    const isXlsx = name.includes(".xlsx") || name.includes(".csv");
+    const isCad = name.includes(".stp") || name.includes(".step") || name.includes(".dwg") || name.includes(".dxf");
+
+    if (ks.some((k) => k.includes(".xlsx") || k.includes(".csv")) && isXlsx) score += 3;
+    if (ks.some((k) => k.includes(".stp") || k.includes(".step") || k.includes(".dwg") || k.includes(".dxf")) && isCad) score += 3;
 
     if (score > bestScore) {
       bestScore = score;
       best = f;
     }
   }
+
   return bestScore > 0 ? best : null;
 }
+
 
 const DiagnosisView = memo(function DiagnosisView({
   targetCountry,
@@ -191,7 +195,6 @@ const DiagnosisView = memo(function DiagnosisView({
 
   // App.jsx에서 내려주는 저장소 파일 목록
   repositoryFiles = [],
-
   // App.jsx에서 내려주는 콜백 (Dashboard Action Items로 보내기)
   onPublishActionItems,
 }) {
@@ -205,13 +208,13 @@ const DiagnosisView = memo(function DiagnosisView({
     {
       id: "upload_cad",
       category: "설계",
-      name: "RT100 트랙터 CAD (Robot Design CAD)",
+      name: "프로젝트 설계도면 CAD ",
       desc: "3D/2D 도면 파일 (.stp, .dwg, .step)",
     },
     {
       id: "upload_bom",
       category: "부품",
-      name: "RT100 트랙터 BOM (Bill of Materials)",
+      name: "프로젝트 부품 BOM ",
       desc: "부품 명세서 (.xlsx, .csv)",
     },
   ];
@@ -248,25 +251,26 @@ const DiagnosisView = memo(function DiagnosisView({
 
   /** ✅ 저장소 자동 업로드: RT100 CAD/BOM 이름 기반 */
   const autoUploadFromRepo = useCallback(() => {
-    const cad = pickBestFile(repositoryFiles, [
-      "rt100트랙터cad",
-      "rt100cad",
-      "rt100 트랙터 cad",
+    const cad = pickBestFileByKeywords(repositoryFiles, [
+      "rt100",
+      "트랙터",
       "cad",
       ".stp",
       ".step",
       ".dwg",
+      ".dxf",
     ]);
-
-    const bom = pickBestFile(repositoryFiles, [
-      "rt100트랙터bom",
-      "rt100bom",
-      "rt100 트랙터 bom",
+  
+    const bom = pickBestFileByKeywords(repositoryFiles, [
+      "rt100",
+      "트랙터",
       "bom",
+      "부품",
+      "parts",
       ".xlsx",
       ".csv",
     ]);
-
+  
     setDiagnosisFiles((prev) => ({
       ...prev,
       ...(cad ? { upload_cad: { name: cad.name, ...cad } } : {}),
@@ -302,7 +306,7 @@ const DiagnosisView = memo(function DiagnosisView({
             <span className="w-12 h-12 rounded-2xl bg-white text-blue-600 flex items-center justify-center shadow-sm border border-gray-100">
               <CheckSquare size={24} />
             </span>
-            규제 진단
+            설계 적합성 검증
           </h1>
 
           <p className="text-gray-500 mt-2 ml-16 text-sm font-medium">

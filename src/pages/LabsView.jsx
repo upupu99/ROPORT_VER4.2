@@ -168,7 +168,7 @@ const ScoreModal = memo(function ScoreModal({ lab, onClose, gaugeMax }) {
           />
 
           <div className="mt-5 text-[11px] text-gray-400">
-             비용 {g.COST_MANWON}만원 이상이면 불리 • 리드타임 {g.LEAD_DAYS}일 이상이면 불리
+            
           </div>
 
           <div className="mt-6 flex justify-end">
